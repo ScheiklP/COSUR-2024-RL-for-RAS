@@ -35,7 +35,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/base_link.STL" />
+            filename="meshes/ecm/base_link.stl" />
         </geometry>
         <material
           name="">
@@ -49,7 +49,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/base_link.STL" />
+            filename="meshes/ecm/base_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -75,7 +75,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/yaw_link.STL" />
+            filename="meshes/ecm/yaw_link.stl" />
         </geometry>
         <material
           name="">
@@ -89,7 +89,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/yaw_link.STL" />
+            filename="meshes/ecm/yaw_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -133,7 +133,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_front_link.STL" />
+            filename="meshes/ecm/pitch_front_link.stl" />
         </geometry>
         <material
           name="">
@@ -147,7 +147,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_front_link.STL" />
+            filename="meshes/ecm/pitch_front_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -191,7 +191,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_bottom_link.STL" />
+            filename="meshes/ecm/pitch_bottom_link.stl" />
         </geometry>
         <material
           name="">
@@ -205,7 +205,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_bottom_link.STL" />
+            filename="meshes/ecm/pitch_bottom_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -250,7 +250,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_end_link.STL" />
+            filename="meshes/ecm/pitch_end_link.stl" />
         </geometry>
         <material
           name="">
@@ -264,7 +264,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_end_link.STL" />
+            filename="meshes/ecm/pitch_end_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -309,7 +309,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/main_insertion_link.STL" />
+            filename="meshes/ecm/main_insertion_link.stl" />
         </geometry>
         <material
           name="">
@@ -323,7 +323,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/main_insertion_link.STL" />
+            filename="meshes/ecm/main_insertion_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -367,7 +367,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/tool_link.STL" />
+            filename="meshes/ecm/tool_link.stl" />
         </geometry>
         <material
           name="">
@@ -381,7 +381,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/tool_link.STL" />
+            filename="meshes/ecm/tool_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -425,7 +425,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_top_link.STL" />
+            filename="meshes/ecm/pitch_top_link.stl" />
         </geometry>
         <material
           name="">
@@ -439,7 +439,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_top_link.STL" />
+            filename="meshes/ecm/pitch_top_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -484,7 +484,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_back_link.STL" />
+            filename="meshes/ecm/pitch_back_link.stl" />
         </geometry>
         <material
           name="">
@@ -498,7 +498,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/pitch_back_link.STL" />
+            filename="meshes/ecm/pitch_back_link.stl" />
         </geometry>
       </collision>
     </link>
@@ -543,7 +543,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/remote_center_link.STL" />
+            filename="meshes/ecm/remote_center_link.stl" />
         </geometry>
         <material
           name="">
@@ -557,7 +557,7 @@
           rpy="0 0 0" />
         <geometry>
           <mesh
-            filename="meshes/ecm/remote_center_link.STL" />
+            filename="meshes/ecm/remote_center_link.stl" />
         </geometry>
       </collision>
     </link>
