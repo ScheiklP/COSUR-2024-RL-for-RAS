@@ -15,6 +15,18 @@ physicsClient = p.connect(p.GUI)
 # Optional: Set additional paths to find the robot URDF files
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
+cam_target_pos = [-0.21, -0.15, -0.02]
+cam_dist = 1.2
+cam_yaw = 125.2
+cam_pitch = -25.0
+
+p.resetDebugVisualizerCamera(
+    cameraDistance=cam_dist,
+    cameraYaw=cam_yaw,
+    cameraPitch=cam_pitch,
+    cameraTargetPosition=cam_target_pos,
+)
+
 
 def joint_values_for_pose(pose, frame_id, robot_id):
     return p.calculateInverseKinematics(
