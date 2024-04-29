@@ -3,16 +3,17 @@
 
     <link name="world"/>
 
-    <joint name="rev_joint" type="revolute">
+    <joint name="rev_joint" type="fixed">
+    <!-- <joint name="rev_joint" type="revolute"> -->
      <parent link="world"/>
      <child link="base_link"/>
      <origin rpy="0 0 0" xyz="0 0 0"/>
-     <axis xyz="0 0 1"/>
-     <limit
-       lower="-3.14159"
-       upper="3.14159"
-       effort="1000"
-       velocity="10" />
+     <!-- <axis xyz="0 0 1"/> -->
+     <!-- <limit -->
+     <!--   lower="-3.14159" -->
+     <!--   upper="3.14159" -->
+     <!--   effort="1000" -->
+     <!--   velocity="10" /> -->
     </joint>
 
   <link
