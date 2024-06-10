@@ -13,7 +13,7 @@
         <color rgba="1.0 0.843 0.0 1.0" />
     </material>
     <material name="Red">
-        <color rgba="0.8 0.0 0.0 1.0" />
+        <color rgba="0.8 0.0 0.0 0.1" />
     </material>
     <material name="Green">
         <color rgba="0.0 1.0 0.0 1.0" />
@@ -202,7 +202,7 @@
             <geometry>
                 <mesh filename="meshes/psm/tool_roll_link.stl" />
             </geometry>
-            <material name="Blue" />
+            <material name="Purple" />
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0" />
@@ -311,7 +311,7 @@
             <geometry>
                 <mesh filename="meshes/psm/tool_gripper2_link.stl" />
             </geometry>
-            <material name="Red" />
+            <material name="Blue" />
         </visual>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0" />
