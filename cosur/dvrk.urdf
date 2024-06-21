@@ -34,6 +34,7 @@
         <color rgba="0.502 0.0 0.502 1.0" />
     </material>
 
+
     <link name="base_link">
         <inertial>
             <origin xyz="0 -0.17016 -0.085607" rpy="0 0 0" />
@@ -79,7 +80,7 @@
         <parent link="base_link" />
         <child link="yaw_link" />
         <axis xyz="0 0 1" />
-        <limit lower="-1.605" upper="1.5994" effort="1000" velocity="10" />
+        <limit lower="-1.605" upper="1.5994" effort="1000000" velocity="10" />
     </joint>
     <link name="pitch_back_link">
         <inertial>
@@ -106,7 +107,7 @@
         <parent link="yaw_link" />
         <child link="pitch_back_link" />
         <axis xyz="0 0 1" />
-        <limit lower="-0.93556" upper="0.94249" effort="1000" velocity="10" />
+        <limit lower="-0.93556" upper="0.94249" effort="1000000" velocity="10" />
     </joint>
     <link name="pitch_bottom_link">
         <inertial>
@@ -133,7 +134,7 @@
         <parent link="pitch_back_link" />
         <child link="pitch_bottom_link" />
         <axis xyz="0 0 1" />
-        <limit lower="-0.94249" upper="0.93556" effort="1000" velocity="10" />
+        <limit lower="-0.94249" upper="0.93556" effort="1000000" velocity="10" />
         <mimic joint="pitch_back_joint" multiplier="-1" />
     </joint>
     <link name="pitch_end_link">
@@ -161,7 +162,7 @@
         <parent link="pitch_bottom_link" />
         <child link="pitch_end_link" />
         <axis xyz="0 0 1" />
-        <limit lower="-0.93556" upper="0.94249" effort="1000" velocity="10" />
+        <limit lower="-0.93556" upper="0.94249" effort="1000000" velocity="10" />
         <mimic joint="pitch_back_joint" multiplier="1" />
     </joint>
     <link name="main_insertion_link">
@@ -189,7 +190,7 @@
         <parent link="pitch_end_link" />
         <child link="main_insertion_link" />
         <axis xyz="0 0 1" />
-        <limit lower="0" upper="0.24" effort="1000" velocity="1" />
+        <limit lower="0" upper="0.24" effort="1000000" velocity="1" />
     </joint>
     <link name="tool_roll_link">
         <inertial>
@@ -216,7 +217,7 @@
         <parent link="main_insertion_link" />
         <child link="tool_roll_link" />
         <axis xyz="0 0 1" />
-        <limit lower="-3.14159" upper="3.14159" effort="1000" velocity="10" />
+        <limit lower="-3.14159" upper="3.14159" effort="1000000" velocity="10" />
     </joint>
     <link name="tool_pitch_link">
         <inertial>
@@ -243,7 +244,7 @@
         <parent link="tool_roll_link" />
         <child link="tool_pitch_link" />
         <axis xyz="0 0 1" />
-        <limit lower="-1.5708" upper="1.5708" effort="1000" velocity="10" />
+        <limit lower="-1.5708" upper="1.5708" effort="1000000" velocity="10" />
     </joint>
     <link name="tool_yaw_link">
         <inertial>
@@ -270,7 +271,7 @@
         <parent link="tool_pitch_link" />
         <child link="tool_yaw_link" />
         <axis xyz="0 0 1" />
-        <limit lower="-1.5708" upper="1.5708" effort="1000" velocity="10" />
+        <limit lower="-1.5708" upper="1.5708" effort="1000000" velocity="10" />
     </joint>
     <link name="tool_gripper1_link">
         <inertial>
@@ -327,6 +328,28 @@
         <axis xyz="0 0 1" />
         <limit lower="0" upper="1" effort="0" velocity="0" />
     </joint>
+
+    <link name="grasp_link">
+        <inertial>
+            <origin xyz="0.0 0.0 0" rpy="0 0 0" />
+            <mass value="0.003" />
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <sphere radius="0.003" />
+            </geometry>
+            <material name="Blue" />
+        </visual>
+    </link>
+    <joint name="grasp_joint" type="spherical">
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <parent link="tool_yaw_link" />
+        <child link="grasp_link" />
+    </joint>
+
+
     <link name="pitch_top_link">
         <inertial>
             <origin xyz="0.31246 -0.00056566 0" rpy="0 0 0" />
@@ -352,7 +375,7 @@
         <parent link="pitch_back_link" />
         <child link="pitch_top_link" />
         <axis xyz="0 0 1" />
-        <limit lower="-0.94249" upper="0.93556" effort="1000" velocity="10" />
+        <limit lower="-0.94249" upper="0.93556" effort="1000000" velocity="10" />
         <mimic joint="pitch_back_joint" multiplier="-1" />
     </joint>
     <link name="pitch_front_link">
@@ -381,7 +404,7 @@
         <child link="pitch_front_link" />
         <axis xyz="0 0 1" />
         <mimic joint="pitch_back_joint" multiplier="1" />
-        <limit lower="-0.93556" upper="0.94249" effort="1000" velocity="10" />
+        <limit lower="-0.93556" upper="0.94249" effort="1000000" velocity="10" />
     </joint>
     <link name="remote_center_link" />
     <joint name="remote_center_joint" type="fixed">
