@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="psm">
+    <link name="base_link">
+        <inertial> <origin xyz="0 -0.17016 -0.085607" rpy="0 0 0" /> <mass value="2.0161" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/base_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/base_link.stl" /> </geometry> </collision>
+    </link>
+
+    <link name="yaw_link">
+        <inertial> <origin xyz="-0.038769 0 0.041596" rpy="0 0 0" /> <mass value="1.4705" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/yaw_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/yaw_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="yaw_joint" type="continuous">
+        <origin xyz="0 0 0" rpy="1.5708 -1.5708 0" />
+        <parent link="base_link" />
+        <child link="yaw_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="-1.605" upper="1.5994" effort="1000" velocity="10" />
+    </joint>
+
+    <link name="pitch_back_link">
+        <inertial> <origin xyz="-0.011651 -0.036241 0" rpy="0 0 0" /> <mass value="0.98494" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_back_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_back_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="pitch_back_joint" type="continuous">
+        <origin xyz="0 0 0.0296" rpy="-1.5708 -0.29073 0" />
+        <parent link="yaw_link" />
+        <child link="pitch_back_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="-0.93556" upper="0.94249" effort="1000" velocity="10" />
+    </joint>
+
+    <link name="pitch_bottom_link">
+        <inertial> <origin xyz="0.25683 -0.010348 0" rpy="0 0 0" /> <mass value="0.44569" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_bottom_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_bottom_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="pitch_bottom_joint" type="continuous">
+        <origin xyz="0.15 0 0" rpy="0 0 1.8615" />
+        <parent link="pitch_back_link" />
+        <child link="pitch_bottom_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="-0.94249" upper="0.93556" effort="1000" velocity="10" />
+        <mimic joint="pitch_back_joint" multiplier="-1" />
+    </joint>
+
+    <link name="pitch_end_link">
+        <inertial> <origin xyz="-0.0019293 -0.13613 0" rpy="0 0 0" /> <mass value="2.091" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_end_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_end_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="pitch_end_joint" type="continuous">
+        <origin xyz="0.516 0 0" rpy="0 0 0" />
+        <parent link="pitch_bottom_link" />
+        <child link="pitch_end_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="-0.93556" upper="0.94249" effort="1000" velocity="10" />
+        <mimic joint="pitch_back_joint" multiplier="1" />
+    </joint>
+
+    <link name="main_insertion_link">
+        <inertial> <origin xyz="0.0040563 -0.00010934 0.0098616" rpy="0 0 0" /> <mass value="0.22491" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 1.5708" /> <geometry> <mesh filename="meshes/psm/main_insertion_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/main_insertion_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="main_insertion_joint" type="prismatic">
+        <origin xyz="0.043 -0.28809 0" rpy="1.5708 1.5708 3.1416" />
+        <parent link="pitch_end_link" />
+        <child link="main_insertion_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="0" upper="0.24" effort="1000" velocity="1" />
+    </joint>
+
+    <link name="tool_roll_link">
+        <inertial> <origin xyz="0 0 -0.0058234" rpy="0 0 0" /> <mass value="0.00033225" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_roll_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_roll_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="tool_roll_joint" type="continuous">
+        <origin xyz="0 0 0.4162" rpy="0 0 -1.5708" />
+        <parent link="main_insertion_link" />
+        <child link="tool_roll_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="-3.14159" upper="3.14159" effort="1000" velocity="10" />
+    </joint>
+    <link name="tool_pitch_link">
+        <inertial> <origin xyz="0.0035763 0 0" rpy="0 0 0" /> <mass value="0.00025784" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_pitch_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_pitch_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="tool_pitch_joint" type="continuous">
+        <origin xyz="0 0 0" rpy="1.5708 -1.5708 3.1416" />
+        <parent link="tool_roll_link" />
+        <child link="tool_pitch_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="-1.5708" upper="1.5708" effort="1000" velocity="10" />
+    </joint>
+    <link name="tool_yaw_link">
+        <inertial> <origin xyz="0 0 0" rpy="0 0 0" /> <mass value="0" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_yaw_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_yaw_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="tool_yaw_joint" type="continuous">
+        <origin xyz="0.0091 0 0" rpy="1.5708 -1.5708 3.1416" />
+        <parent link="tool_pitch_link" />
+        <child link="tool_yaw_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="-1.5708" upper="1.5708" effort="1000" velocity="10" />
+    </joint>
+    <link name="tool_gripper1_link">
+        <inertial> <origin xyz="0.00019605 0.001435 -0.00088478" rpy="0 0 0" /> <mass value="0" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_gripper1_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_gripper1_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="tool_gripper1_joint" type="continuous">
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <parent link="tool_yaw_link" />
+        <child link="tool_gripper1_link" />
+        <axis xyz="0 0 1" />
+        <mimic joint="tool_gripper2_joint" multiplier="-1" />
+        <limit lower="0" upper="1" effort="0" velocity="0" />
+    </joint>
+    <link name="tool_gripper2_link">
+        <inertial> <origin xyz="-0.00019605 0.001435 0.00088478" rpy="0 0 0" /> <mass value="0" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_gripper2_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/tool_gripper2_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="tool_gripper2_joint" type="continuous">
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <parent link="tool_yaw_link" />
+        <child link="tool_gripper2_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="0" upper="1" effort="0" velocity="0" />
+    </joint>
+
+    <link name="pitch_top_link">
+        <inertial> <origin xyz="0.31246 -0.00056566 0" rpy="0 0 0" /> <mass value="0.17841" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_top_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_top_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="pitch_top_joint" type="continuous">
+        <origin xyz="0.18366 0.014121 0" rpy="0 0 1.8615" />
+        <parent link="pitch_back_link" />
+        <child link="pitch_top_link" />
+        <axis xyz="0 0 1" />
+        <limit lower="-0.94249" upper="0.93556" effort="1000" velocity="10" />
+        <mimic joint="pitch_back_joint" multiplier="-1" />
+    </joint>
+
+    <link name="pitch_front_link">
+        <inertial> <origin xyz="0.096269 0 0.047551" rpy="0 0 0" /> <mass value="0.074425" /> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" /> </inertial>
+        <visual> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_front_link.stl" /> </geometry> </visual>
+        <collision> <origin xyz="0 0 0" rpy="0 0 0" /> <geometry> <mesh filename="meshes/psm/pitch_front_link.stl" /> </geometry> </collision>
+    </link>
+    <joint name="pitch_front_joint" type="continuous">
+        <origin xyz="0 0 -0.0664" rpy="-1.5708 -0.29073 0" />
+        <parent link="yaw_link" />
+        <child link="pitch_front_link" />
+        <axis xyz="0 0 1" />
+        <mimic joint="pitch_back_joint" multiplier="1" />
+        <limit lower="-0.93556" upper="0.94249" effort="1000" velocity="10" />
+    </joint>
+
+    <link name="remote_center_link" />
+    <joint name="remote_center_joint" type="fixed">
+        <parent link="base_link" />
+        <child link="remote_center_link" />
+        <origin rpy="0 0 0" xyz="0 0.4864 0" />
+    </joint>
+</robot>
