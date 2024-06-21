@@ -109,10 +109,6 @@ class PSM:
 
         self.ee_link_index = 7
 
-        # Print all joint names
-        # for i in range(self.bullet_client.getNumJoints(self.robot_id)):
-        #     print(f"Joint {i}: {self.bullet_client.getJointInfo(self.robot_id, i)[1]}")
-
         # 0 -> yaw
         # 1 -> pitch
         # 4 -> main insertion
@@ -121,6 +117,7 @@ class PSM:
         # 7 -> tool yaw
         # 9 -> gripper opening -> manual mimic to 8
         self.joint_ids = [0, 1, 4, 5, 6, 7, 9]
+        self.joint_names = ["yaw", "pitch", "main_insertion", "tool_roll", "tool_pitch", "tool_yaw", "gripper_opening"]
         self.joint_limits = [
             [-1.605, 1.5994],
             [-0.93556, 0.94249],
@@ -159,7 +156,6 @@ class PSM:
 
         # Gripper jaw mimic joint
         if joint_id == 9:
-            # self.bullet_client.resetJointState(self.robot_id, 8, -clipped_position)
             self.bullet_client.setJointMotorControl2(
                 self.robot_id,
                 8,
@@ -170,9 +166,8 @@ class PSM:
 
         # Pitch mimic joints
         if joint_id == 1:
-            # for mimic_joint_id, direction in zip((2, 3, 10, 11), (-1, 1, -1, 1)):
             for mimic_joint_id, direction in zip((2, 3, 11, 12), (-1, 1, -1, 1)):
-                # self.bullet_client.resetJointState(self.robot_id, mimic_joint_id, direction * clipped_position)
+                # for mimic_joint_id, direction in zip((2, 3, 10, 11), (-1, 1, -1, 1)):
                 self.bullet_client.setJointMotorControl2(
                     self.robot_id,
                     mimic_joint_id,
@@ -181,19 +176,19 @@ class PSM:
                     force=self.mimic_joint_force_factor * self.max_motor_force,
                 )
 
-    def set_joint_positions(self, positions: list):
+    def set_joint_positions(self, positions: list | np.ndarray):
         if not len(positions) == 7:
             raise ValueError(f"The number of joint positions should be 7. Got {len(positions)} instead.")
 
         for i, position in enumerate(positions):
             self.set_joint_position(i, position)
 
-    def get_joint_positions(self) -> list:
+    def get_joint_positions(self) -> np.ndarray:
         joint_positions = []
         for joint_id in self.joint_ids:
             joint_positions.append(self.bullet_client.getJointState(self.robot_id, joint_id)[0])
 
-        return joint_positions
+        return np.array(joint_positions)
 
     def demo_motion(self, simulation_hz: int = 500):
         for i in range(7):
