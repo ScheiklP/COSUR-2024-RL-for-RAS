@@ -190,6 +190,25 @@ class PSM:
 
         return np.array(joint_positions)
 
+    def get_joint_position(self, joint: int) -> float:
+        joint_id = self.joint_ids[joint]
+        return self.bullet_client.getJointState(self.robot_id, joint_id)[0]
+
+    def get_joint_velocities(self) -> np.ndarray:
+        joint_velocities = []
+        for joint_id in self.joint_ids:
+            joint_velocities.append(self.bullet_client.getJointState(self.robot_id, joint_id)[1])
+
+        return np.array(joint_velocities)
+
+    def get_joint_velocity(self, joint: int) -> float:
+        joint_id = self.joint_ids[joint]
+        return self.bullet_client.getJointState(self.robot_id, joint_id)[1]
+
+    def get_ee_pose(self) -> tuple:
+        ee_position, ee_orientation = self.bullet_client.getLinkState(self.robot_id, self.ee_link_index, computeForwardKinematics=True)[4:6]
+        return ee_position, ee_orientation
+
     def demo_motion(self, simulation_hz: int = 500):
         for i in range(7):
             joint_values = []
