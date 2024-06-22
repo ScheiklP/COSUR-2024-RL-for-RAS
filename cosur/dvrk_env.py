@@ -46,6 +46,7 @@ class DVRKEnv(gym.Env):
         render_mode: str | None = "human",
         frame_skip: int = 1,
         action_type: ActionType = ActionType.ABSOLUTE_POSITION,
+        randomize_initial_joint_values: bool = True,
     ):
         # Import pybullet only when the environment is created.
         # This is to avoid problems when running multiple environments in parallel.
@@ -80,6 +81,9 @@ class DVRKEnv(gym.Env):
         if self.render_mode == "human":
             self.bullet_client.resetDebugVisualizerCamera(**CAMERA_VIEW["closeup"])
 
+        # Setup the simulation scene
+        self.randomize_initial_joint_values = randomize_initial_joint_values
+        self.joint_velocities_unstable_threshold = 1.0
         self.setup_simulation_scene()
 
         # Action and observation spaces
@@ -108,6 +112,7 @@ class DVRKEnv(gym.Env):
         # TODO: Reward features
 
         self.reward_feature_weights = {}
+        self.previous_reward_features = {}
         self.dt_queue = deque(maxlen=100)
 
     def setup_simulation_scene(self):
@@ -128,6 +133,7 @@ class DVRKEnv(gym.Env):
 
         # Initialize the cloth
         self.add_cloth()
+        self.grasp_constraint = None
 
         # visual_sphere = self.bullet_client.createVisualShape(
         #     shapeType=self.bullet_client.GEOM_SPHERE,
@@ -187,6 +193,7 @@ class DVRKEnv(gym.Env):
         for _ in range(self.frame_skip):
             self.psm.set_joint_positions(new_joint_target_positions)
             self.joint_target_positions = new_joint_target_positions
+            self.check_grasp()
             self.bullet_client.stepSimulation()
 
         # Compute the reward
@@ -194,6 +201,7 @@ class DVRKEnv(gym.Env):
         reward = 0.0
         for feature, weight in self.reward_feature_weights.items():
             reward += weight * reward_features[feature]
+        self.previous_reward_features = reward_features
 
         # Check if the episode is done
         terminated = self.check_episode_done()
@@ -217,6 +225,16 @@ class DVRKEnv(gym.Env):
         num_collision_with_floor = len(self.bullet_client.getContactPoints(bodyA=self.psm.robot_id, bodyB=self.plane))
         reward_features["num_collision_with_floor"] = num_collision_with_floor
 
+        joint_velocities = self.psm.get_joint_velocities()
+        simulation_unstable = np.linalg.norm(joint_velocities) > self.joint_velocities_unstable_threshold
+        reward_features["simulation_unstable"] = simulation_unstable
+
+        grasp_in_previous_step = bool(self.previous_reward_features.get("grasp_constraint", False))
+        grasp_in_current_step = bool(self.grasp_constraint)
+        established_new_grasp = not grasp_in_previous_step and grasp_in_current_step
+        reward_features["established_new_grasp"] = established_new_grasp
+        reward_features["cloth_is_grasped"] = grasp_in_current_step
+
         return reward_features
 
     def check_episode_done(self) -> bool:
@@ -233,41 +251,42 @@ class DVRKEnv(gym.Env):
         self.bullet_client.resetSimulation(self.bullet_client.RESET_USE_DEFORMABLE_WORLD)
         self.setup_simulation_scene()
 
-        max_reset_sim_time = 2.0
-        max_sim_steps = int(max_reset_sim_time * self.simulation_hz)
-        valid_reset = False
-        while not valid_reset:
-            # Reset the PSM to joint values within 80% of the joint limits
-            low, high = [np.array(limits) for limits in zip(*self.psm.joint_limits)]
-            initial_joint_positions = low + 0.2 * (high - low) + 0.6 * self.np_random.random(7) * (high - low)
-            self.joint_target_positions = initial_joint_positions
+        if self.randomize_initial_joint_values:
+            max_reset_sim_time = 2.0
+            max_sim_steps = int(max_reset_sim_time * self.simulation_hz)
+            valid_reset = False
+            while not valid_reset:
+                # Reset the PSM to joint values within 80% of the joint limits
+                low, high = [np.array(limits) for limits in zip(*self.psm.joint_limits)]
+                initial_joint_positions = low + 0.2 * (high - low) + 0.6 * self.np_random.random(7) * (high - low)
+                self.joint_target_positions = initial_joint_positions
 
-            num_sim_steps = 0
-            reached_target_joint_positions = False
-            while not reached_target_joint_positions:
-                self.psm.set_joint_positions(self.joint_target_positions)
-                self.bullet_client.stepSimulation()
-                actual_joint_values = self.psm.get_joint_positions()
-                control_error = self.joint_target_positions - actual_joint_values
-                if np.all(np.abs(control_error) < 0.1):
-                    reached_target_joint_positions = True
+                num_sim_steps = 0
+                reached_target_joint_positions = False
+                while not reached_target_joint_positions:
+                    self.psm.set_joint_positions(self.joint_target_positions)
+                    self.bullet_client.stepSimulation()
+                    actual_joint_values = self.psm.get_joint_positions()
+                    control_error = self.joint_target_positions - actual_joint_values
+                    if np.all(np.abs(control_error) < 0.1):
+                        reached_target_joint_positions = True
 
-                robot_in_collision = False
-                for object_id in [self.plane, self.cloth_id]:
-                    contact_points = self.bullet_client.getContactPoints(bodyA=self.psm.robot_id, bodyB=object_id)
-                    if len(contact_points) > 0:
-                        robot_in_collision = True
+                    robot_in_collision = False
+                    for object_id in [self.plane, self.cloth_id]:
+                        contact_points = self.bullet_client.getContactPoints(bodyA=self.psm.robot_id, bodyB=object_id)
+                        if len(contact_points) > 0:
+                            robot_in_collision = True
+                            break
+
+                    if robot_in_collision:
                         break
 
-                if robot_in_collision:
-                    break
+                    num_sim_steps += 1
+                    if num_sim_steps >= max_sim_steps:
+                        break
 
-                num_sim_steps += 1
-                if num_sim_steps >= max_sim_steps:
-                    break
-
-            if not robot_in_collision and reached_target_joint_positions:
-                valid_reset = True
+                if not robot_in_collision and reached_target_joint_positions:
+                    valid_reset = True
 
         # TODO return reset observation and additional information
         pass
@@ -277,6 +296,22 @@ class DVRKEnv(gym.Env):
 
     def close(self):
         self.bullet_client.disconnect()
+
+    def check_grasp(self):
+        gripper_opening_angle = self.psm.get_joint_position(6)
+        grasp_threshold = np.deg2rad(10.0)
+
+        # If the gripper is closed enough and the cloth is in contact with the gripper, create a grasp constraint
+        if self.grasp_constraint is None and gripper_opening_angle <= grasp_threshold:
+            gripper_collides_with_cloth, closest_vertex = self.check_gripper_contacts()
+            if gripper_collides_with_cloth:
+                assert closest_vertex is not None
+                self.grasp_constraint = env.create_grasp_constraint(closest_vertex)
+
+        # If the gripper is too open, remove the grasp constraint
+        elif self.grasp_constraint is not None and gripper_opening_angle > grasp_threshold:
+            self.bullet_client.removeConstraint(self.grasp_constraint)
+            self.grasp_constraint = None
 
     def check_gripper_contacts(self) -> tuple[bool, int | None]:
         """Check if the gripper is in contact with the cloth.
@@ -430,22 +465,30 @@ if __name__ == "__main__":
         # action_type=ActionType.ABSOLUTE_POSITION,
         simulation_hz=simulation_hz,
         frame_skip=frame_skip,
+        randomize_initial_joint_values=False,
     )
 
     # Disable scientific notation for numpy
     np.set_printoptions(suppress=True)
 
     j = 2
+    # while True:
+    #     env.reset()
+    #     # range_val = np.linspace(-1, 1, 100)
+    #     for i in range(120):
+    #         random_action = np.zeros(7)
+    #         # random_action[j] = range_val[i]
+    #         random_action[j] = 1.0
+    #         # random_action[2] = 1.0
+    #         obs, reward, terminated, truncated, info = env.step(random_action)
+    #         print(env.grasp_constraint)
+    #         # print(f"Current FPS: {env.current_fps:.2f}")
+
     while True:
-        env.reset()
-        # range_val = np.linspace(-1, 1, 100)
-        for i in range(100):
-            random_action = np.zeros(7)
-            # random_action[j] = range_val[i]
-            random_action[j] = 1.0
-            # random_action[2] = 1.0
-            obs, reward, terminated, truncated, info = env.step(random_action)
-            # print(f"Current FPS: {env.current_fps:.2f}")
+        random_action = np.zeros(7)
+        random_action[j] = 1.0 if env.grasp_constraint is None else -1.0
+        obs, reward, terminated, truncated, info = env.step(random_action)
+        print(f"Current FPS: {env.current_fps:.2f}")
 
     # insertion_values = np.linspace(0.05, 0.145, 1000)
     # current_joint_values = env.psm.get_joint_positions()
