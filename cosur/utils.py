@@ -2,7 +2,7 @@ import time
 import numpy as np
 
 
-def add_dummy_sphere(bullet_client, radius: float = 0.1, position: list = [0, 0, 0], orientation: list = [0, 0, 0], color: list = [1, 0, 0, 1], with_frame: bool = True) -> int:
+def add_dummy_sphere(bullet_client, radius: float = 0.1, position: list | np.ndarray = [0, 0, 0], orientation: list | np.ndarray = [0, 0, 0], color: list | np.ndarray = [1, 0, 0, 1], with_frame: bool = True) -> int:
     sphere_id = bullet_client.createVisualShape(
         shapeType=bullet_client.GEOM_SPHERE,
         radius=radius,
@@ -13,11 +13,11 @@ def add_dummy_sphere(bullet_client, radius: float = 0.1, position: list = [0, 0,
         baseMass=0,
         baseVisualShapeIndex=sphere_id,
         basePosition=position,
-        baseOrientation=bullet_client.getQuaternionFromEuler(orientation),
+        baseOrientation=bullet_client.getQuaternionFromEuler(orientation) if len(orientation) == 3 else orientation,
     )
 
     if with_frame:
-        add_coordinate_system(bullet_client, position, bullet_client.getQuaternionFromEuler(orientation))
+        add_coordinate_system(bullet_client, position, bullet_client.getQuaternionFromEuler(orientation) if len(orientation) == 3 else orientation)
 
     return sphere_body_id
 
@@ -41,7 +41,7 @@ def add_dummy_box(bullet_client, half_extents: list = [0.1, 0.1, 0.1], position:
     return box_body_id
 
 
-def add_coordinate_system(bullet_client, position: list, orientation: list, scale: float = 0.1):
+def add_coordinate_system(bullet_client, position: list | np.ndarray, orientation: list | np.ndarray, scale: float = 0.1):
     # apply quaternion orientation to x, y, z vectors
     x = np.array([scale, 0, 0])
     y = np.array([0, scale, 0])
@@ -135,6 +135,9 @@ class PSM:
             for i in range(self.bullet_client.getNumJoints(self.robot_id)):
                 add_coordinate_frame(self.bullet_client, self.robot_id, i, size=0.1, line_width=1.0)
 
+    def show_ee_frame(self):
+        add_coordinate_frame(self.bullet_client, self.robot_id, self.ee_link_index, size=0.1, line_width=1.0)
+
     def clip_joint_position(self, joint: int, position: float):
         lower_limit, upper_limit = self.joint_limits[joint]
         return max(lower_limit, min(upper_limit, position))
@@ -143,8 +146,10 @@ class PSM:
         joint_id = self.joint_ids[joint]
         clipped_position = self.clip_joint_position(joint, position)
 
-        if position != clipped_position:
-            print(f"Joint {joint} position clipped from {position} to {clipped_position}.")
+        # TODO: restrict tool yaw, pith, and gripper opening, when the tool is still in the insertion shaft
+
+        # if position != clipped_position:
+        #     print(f"Joint {joint} position clipped from {position} to {clipped_position}.")
 
         self.bullet_client.setJointMotorControl2(
             self.robot_id,
@@ -167,7 +172,6 @@ class PSM:
         # Pitch mimic joints
         if joint_id == 1:
             for mimic_joint_id, direction in zip((2, 3, 11, 12), (-1, 1, -1, 1)):
-                # for mimic_joint_id, direction in zip((2, 3, 10, 11), (-1, 1, -1, 1)):
                 self.bullet_client.setJointMotorControl2(
                     self.robot_id,
                     mimic_joint_id,
@@ -182,6 +186,17 @@ class PSM:
 
         for i, position in enumerate(positions):
             self.set_joint_position(i, position)
+
+    def reset_joint_position(self, joint: int, position: float):
+        joint_id = self.joint_ids[joint]
+        self.bullet_client.resetJointState(self.robot_id, joint_id, position)
+
+    def reset_joint_positions(self, positions: list):
+        if not len(positions) == 7:
+            raise ValueError(f"The number of joint positions should be 7. Got {len(positions)} instead.")
+
+        for i, position in enumerate(positions):
+            self.reset_joint_position(i, position)
 
     def get_joint_positions(self) -> np.ndarray:
         joint_positions = []
@@ -207,7 +222,11 @@ class PSM:
 
     def get_ee_pose(self) -> tuple:
         ee_position, ee_orientation = self.bullet_client.getLinkState(self.robot_id, self.ee_link_index, computeForwardKinematics=True)[4:6]
-        return ee_position, ee_orientation
+        return np.array(ee_position), np.array(ee_orientation)
+
+    def get_rcm_position(self) -> np.ndarray:
+        rcm_position = self.bullet_client.getLinkState(self.robot_id, 13)[0]
+        return np.array(rcm_position)
 
     def demo_motion(self, simulation_hz: int = 500):
         for i in range(7):
@@ -222,3 +241,38 @@ class PSM:
                 self.set_joint_positions(joint_states)
                 self.bullet_client.stepSimulation()
                 time.sleep(1 / simulation_hz)
+
+
+def print_contact_data_verbose(contact_points: list):
+    for contact in contact_points:
+        for val, name in zip(contact, ["contactFlag", "bodyUniqueIdA", "bodyUniqueIdB", "linkIndexA", "linkIndexB", "positionOnA", "positionOnB", "contactNormalOnB", "contactDistance", "normalForce", "lateralFriction1", "lateralFrictionDir1", "lateralFriction2", "lateralFrictionDir2"]):
+            print(f"{name}: {val}")
+
+
+def print_link_names(bullet_client, robot_id: int):
+    for i in range(bullet_client.getNumJoints(robot_id)):
+        name = bullet_client.getJointInfo(robot_id, i)[1]
+        print(f"Link {i}: {name}")
+
+
+def print_joint_info(bullet_client, robot_id: int):
+    for i in range(bullet_client.getNumJoints(robot_id)):
+        full_info = bullet_client.getJointInfo(robot_id, i)
+
+        for val, name in zip(
+            full_info,
+            ["jointIndex", "jointName", "jointType", "qIndex", "uIndex", "flags", "jointDamping", "jointFriction", "jointLowerLimit", "jointUpperLimit", "jointMaxForce", "jointMaxVelocity", "linkName", "jointAxis", "parentFramePos", "parentFrameOrn", "parentIndex"],
+        ):
+            if name == "jointType":
+                choices = {
+                    bullet_client.JOINT_REVOLUTE: "REVOLUTE",
+                    bullet_client.JOINT_PRISMATIC: "PRISMATIC",
+                    bullet_client.JOINT_SPHERICAL: "SPHERICAL",
+                    bullet_client.JOINT_PLANAR: "PLANAR",
+                    bullet_client.JOINT_FIXED: "FIXED",
+                    bullet_client.JOINT_POINT2POINT: "POINT2POINT",
+                    bullet_client.JOINT_GEAR: "GEAR",
+                }
+                val = choices[val]
+            print(f"{name}: {val}")
+        print()
