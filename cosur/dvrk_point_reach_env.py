@@ -23,6 +23,12 @@ CAMERA_VIEW = {
         "cameraPitch": -23.0,
         "cameraYaw": 160.8,
     },
+    "workspace": {
+        "cameraTargetPosition": (-0.41, -0.05, -0.27),
+        "cameraDistance": 1.2,
+        "cameraPitch": -25.80,
+        "cameraYaw": 144.0,
+    },
 }
 
 
@@ -50,7 +56,7 @@ class DVRKEnv(gym.Env):
         },
         show_workspace: bool = False,
         egl_rendering: bool = False,
-        image_shape: tuple[int, int] = (128, 128),
+        image_shape: tuple[int, int] = (420, 420),
     ):
         # Import pybullet only when the environment is created.
         # This is to avoid problems when running multiple environments in parallel.
@@ -86,7 +92,7 @@ class DVRKEnv(gym.Env):
         self.bullet_client.setPhysicsEngineParameter(fixedTimeStep=1 / self.simulation_hz)  # Set the simulation frequency
         self.bullet_client.setGravity(0, 0, -9.81)  # Set gravity
         if self.render_mode == "human":
-            self.bullet_client.resetDebugVisualizerCamera(**CAMERA_VIEW["overview"])
+            self.bullet_client.resetDebugVisualizerCamera(**CAMERA_VIEW["workspace"])
 
         self.image_shape = image_shape
         if egl_rendering:
@@ -124,11 +130,17 @@ class DVRKEnv(gym.Env):
         else:
             raise ValueError(f"Invalid action type: {action_type}")
 
+        self.target_position = self.sample_target_position()
+        self.target_orientation = self.sample_target_orientation()
+        dummy_observation = self.get_observation()
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=dummy_observation.shape, dtype=np.float32)
+
         self.reward_feature_weights = reward_feature_weights
         self.previous_reward_features = {}
         self.target_position_threshold = target_position_threshold
         self.target_orientation_threshold = target_orientation_threshold
         self.dt_queue = deque(maxlen=100)
+        self.visual_target = None
 
         self.needs_reset = True
 
@@ -250,6 +262,7 @@ class DVRKEnv(gym.Env):
             info[f"reward_{feature}"] = weight * reward_features[feature]
         info["distance_to_target_position"] = reward_features["position_difference"]
         info["distance_to_target_orientation"] = reward_features["orientation_difference"]
+        info["success"] = reward_features["done"]
         self.previous_reward_features = reward_features
 
         # Check if the episode is done
@@ -309,12 +322,32 @@ class DVRKEnv(gym.Env):
         observation_features["target_position"] = self.target_position
         observation_features["target_orientation"] = self.target_orientation
 
-        return np.concatenate(list(observation_features.values()))
+        return np.concatenate(list(observation_features.values()), dtype=np.float32)
 
     def reset(self, seed: int | None = None, options: dict | None = None) -> tuple[np.ndarray, dict]:
         # Parent class reset initializes the RNG
         super().reset(seed=seed, options=options)
 
+        # Remove the old target visualization
+        if self.visual_target is not None:
+            self.bullet_client.removeBody(self.visual_target)
+            self.visual_target = None
+
+        # Sample a new target position and orientation
+        self.target_position = self.sample_target_position()
+        self.target_orientation = self.sample_target_orientation()
+
+        # Visualize the target position and orientation
+        self.visual_target = add_dummy_sphere(
+            bullet_client=self.bullet_client,
+            position=self.target_position,
+            orientation=self.target_orientation,
+            radius=0.005,
+            color=[0, 0, 1, 1],
+            with_frame=True,
+        )
+
+        # Reset the robot
         if self.randomize_initial_joint_values:
             valid_reset = False
             while not valid_reset:
@@ -337,19 +370,6 @@ class DVRKEnv(gym.Env):
             self.psm.reset_joint_positions(self.inital_joint_positions)
             self.bullet_client.stepSimulation()
 
-        self.target_position = self.sample_target_position()
-        self.target_orientation = self.sample_target_orientation()
-
-        # Visualize the target position and orientation
-        add_dummy_sphere(
-            bullet_client=self.bullet_client,
-            position=self.target_position,
-            orientation=self.target_orientation,
-            radius=0.005,
-            color=[0, 0, 1, 1],
-            with_frame=True,
-        )
-
         self.needs_reset = False
 
         observation = self.get_observation()
@@ -359,10 +379,10 @@ class DVRKEnv(gym.Env):
 
     def render(self, mode: str = "human") -> np.ndarray | None:
         view_matrix = self.bullet_client.computeViewMatrixFromYawPitchRoll(
-            cameraTargetPosition=CAMERA_VIEW["overview"]["cameraTargetPosition"],
-            distance=CAMERA_VIEW["overview"]["cameraDistance"],
-            yaw=CAMERA_VIEW["overview"]["cameraYaw"],
-            pitch=CAMERA_VIEW["overview"]["cameraPitch"],
+            cameraTargetPosition=CAMERA_VIEW["workspace"]["cameraTargetPosition"],
+            distance=CAMERA_VIEW["workspace"]["cameraDistance"],
+            yaw=CAMERA_VIEW["workspace"]["cameraYaw"],
+            pitch=CAMERA_VIEW["workspace"]["cameraPitch"],
             roll=0,
             upAxisIndex=2,
         )
@@ -398,7 +418,7 @@ if __name__ == "__main__":
         simulation_hz=simulation_hz,
         frame_skip=frame_skip,
         randomize_initial_joint_values=False,
-        egl_rendering=True,
+        egl_rendering=False,
     )
 
     # Disable scientific notation for numpy
