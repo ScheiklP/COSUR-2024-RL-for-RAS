@@ -49,6 +49,8 @@ class DVRKEnv(gym.Env):
             "done": 100.0,
         },
         show_workspace: bool = False,
+        egl_rendering: bool = False,
+        image_shape: tuple[int, int] = (128, 128),
     ):
         # Import pybullet only when the environment is created.
         # This is to avoid problems when running multiple environments in parallel.
@@ -60,7 +62,11 @@ class DVRKEnv(gym.Env):
 
         # Set the render mode
         self.render_mode = render_mode
-        self.bullet_client.connect(self.bullet_client.GUI if render_mode == "human" else self.bullet_client.DIRECT)
+        if not egl_rendering and render_mode == "human":
+            mode = p.GUI
+        else:
+            mode = p.DIRECT
+        self.bullet_client.connect(mode)
 
         # Controlling the robot at a super high frequency
         # can become pretty hard, because there are no real changes between frames.
@@ -80,7 +86,16 @@ class DVRKEnv(gym.Env):
         self.bullet_client.setPhysicsEngineParameter(fixedTimeStep=1 / self.simulation_hz)  # Set the simulation frequency
         self.bullet_client.setGravity(0, 0, -9.81)  # Set gravity
         if self.render_mode == "human":
-            self.bullet_client.resetDebugVisualizerCamera(**CAMERA_VIEW["closeup"])
+            self.bullet_client.resetDebugVisualizerCamera(**CAMERA_VIEW["overview"])
+
+        self.image_shape = image_shape
+        if egl_rendering:
+            import pkgutil
+
+            egl = pkgutil.get_loader("eglRenderer")
+            self.bullet_client.loadPlugin(egl.get_filename(), "_eglRendererPlugin")
+            self.bullet_client.configureDebugVisualizer(self.bullet_client.COV_ENABLE_RENDERING, 0)
+            self.bullet_client.configureDebugVisualizer(self.bullet_client.COV_ENABLE_GUI, 0)
 
         # Setup the simulation scene
         self.randomize_initial_joint_values = randomize_initial_joint_values
@@ -343,13 +358,37 @@ class DVRKEnv(gym.Env):
         return observation, reset_info
 
     def render(self, mode: str = "human") -> np.ndarray | None:
-        pass
+        view_matrix = self.bullet_client.computeViewMatrixFromYawPitchRoll(
+            cameraTargetPosition=CAMERA_VIEW["overview"]["cameraTargetPosition"],
+            distance=CAMERA_VIEW["overview"]["cameraDistance"],
+            yaw=CAMERA_VIEW["overview"]["cameraYaw"],
+            pitch=CAMERA_VIEW["overview"]["cameraPitch"],
+            roll=0,
+            upAxisIndex=2,
+        )
+        projection_matrix = self.bullet_client.computeProjectionMatrixFOV(
+            fov=60,
+            aspect=1.0,
+            nearVal=0.1,
+            farVal=10.0,
+        )
+        img = self.bullet_client.getCameraImage(
+            width=self.image_shape[1],
+            height=self.image_shape[0],
+            viewMatrix=view_matrix,
+            projectionMatrix=projection_matrix,
+        )
+        rgb_array = np.array(img[2])[:, :, :3]
+
+        return rgb_array
 
     def close(self):
         self.bullet_client.disconnect()
 
 
 if __name__ == "__main__":
+    import cv2
+
     target_dt = 0.1
     simulation_hz = 200
     frame_skip = int(round(target_dt * simulation_hz))
@@ -359,6 +398,7 @@ if __name__ == "__main__":
         simulation_hz=simulation_hz,
         frame_skip=frame_skip,
         randomize_initial_joint_values=False,
+        egl_rendering=True,
     )
 
     # Disable scientific notation for numpy
@@ -368,3 +408,6 @@ if __name__ == "__main__":
     while True:
         random_action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(random_action)
+        img = env.render()
+        cv2.imshow("DVRK", img[:, :, ::-1])
+        cv2.waitKey(1)
