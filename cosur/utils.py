@@ -146,7 +146,10 @@ class PSM:
         joint_id = self.joint_ids[joint]
         clipped_position = self.clip_joint_position(joint, position)
 
-        # TODO: restrict tool yaw, pith, and gripper opening, when the tool is still in the insertion shaft
+        # restrict tool yaw, pith, and gripper opening, when the tool is still in the insertion shaft
+        if joint in (4, 5, 6, 7):
+            if self.get_joint_position(2) < 0.05:
+                clipped_position = np.clip(clipped_position, np.deg2rad(-10), np.deg2rad(10))
 
         # if position != clipped_position:
         #     print(f"Joint {joint} position clipped from {position} to {clipped_position}.")
