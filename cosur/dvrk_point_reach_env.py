@@ -79,7 +79,7 @@ class DVRKEnv(gym.Env):
         # We can artificially increase the time between observations (and actions) by skipping frames.
         self.simulation_hz = simulation_hz
         self.frame_skip = frame_skip
-        self.effective_dt = 1.0 / (self.simulation_hz * self.frame_skip)
+        self.effective_dt = 1.0 / simulation_hz * frame_skip
         # Set metadata
         self.metadata = {
             "render.modes": ["human", "rgb_array"],
@@ -121,12 +121,14 @@ class DVRKEnv(gym.Env):
         if action_type == ActionType.ABSOLUTE_POSITION:
             self.scale_action = lambda action: low + (action + 1) * 0.5 * (high - low)
         elif action_type == ActionType.RELATIVE_POSITION:
-            # We set the maximum speed of the robot to the range of motion divided by the time it takes to reach the end of the range.
-            # We will use this to scale the action space.
-            time_for_full_rom = 1.0  # in seconds
-            max_speed = (high - low) / (time_for_full_rom * self.simulation_hz)
+            # Joint velocities in rad/2 and m/s
+            max_joint_velocities_rev = np.deg2rad(45)
+            max_joint_velocities_pris = 0.08
+
+            scaling_values = np.array([max_joint_velocities_rev] * 2 + [max_joint_velocities_pris] + [max_joint_velocities_rev] * 4)
+
             # Action of 0 means no movement, 1 means full speed in one direction, -1 means full speed in the other direction.
-            self.scale_action = lambda action: action * max_speed
+            self.scale_action = lambda action: action * scaling_values * self.effective_dt
         else:
             raise ValueError(f"Invalid action type: {action_type}")
 
@@ -248,9 +250,9 @@ class DVRKEnv(gym.Env):
         else:
             raise ValueError(f"Invalid action type: {self.action_type}")
 
+        self.joint_target_positions = new_joint_target_positions
         for _ in range(self.frame_skip):
             self.psm.set_joint_positions(new_joint_target_positions)
-            self.joint_target_positions = new_joint_target_positions
             self.bullet_client.stepSimulation()
 
         # Compute the reward and additional information
@@ -418,6 +420,7 @@ if __name__ == "__main__":
         simulation_hz=simulation_hz,
         frame_skip=frame_skip,
         randomize_initial_joint_values=False,
+        # randomize_initial_joint_values=True,
         egl_rendering=False,
     )
 
@@ -426,8 +429,11 @@ if __name__ == "__main__":
 
     env.reset()
     while True:
+        start = time.time()
         random_action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(random_action)
         img = env.render()
         cv2.imshow("DVRK", img[:, :, ::-1])
         cv2.waitKey(1)
+        end = time.time()
+        time.sleep(max(0, target_dt - (end - start)))
