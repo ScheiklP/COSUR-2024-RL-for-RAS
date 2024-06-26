@@ -1,8 +1,11 @@
 import time
 import numpy as np
+import os
+import sys
+from contextlib import contextmanager
 
 
-def add_dummy_sphere(bullet_client, radius: float = 0.1, position: list | np.ndarray = [0, 0, 0], orientation: list | np.ndarray = [0, 0, 0], color: list | np.ndarray = [1, 0, 0, 1], with_frame: bool = True) -> int:
+def add_dummy_sphere(bullet_client, radius: float = 0.1, position: list | np.ndarray = [0, 0, 0], orientation: list | np.ndarray = [0, 0, 0], color: list | np.ndarray = [1, 0, 0, 1], with_frame: bool = True) -> tuple:
     sphere_id = bullet_client.createVisualShape(
         shapeType=bullet_client.GEOM_SPHERE,
         radius=radius,
@@ -17,12 +20,14 @@ def add_dummy_sphere(bullet_client, radius: float = 0.1, position: list | np.nda
     )
 
     if with_frame:
-        add_coordinate_system(bullet_client, position, bullet_client.getQuaternionFromEuler(orientation) if len(orientation) == 3 else orientation)
+        line_ids = add_coordinate_system(bullet_client, position, bullet_client.getQuaternionFromEuler(orientation) if len(orientation) == 3 else orientation)
+    else:
+        line_ids = []
 
-    return sphere_body_id
+    return sphere_body_id, line_ids
 
 
-def add_dummy_box(bullet_client, half_extents: list = [0.1, 0.1, 0.1], position: list = [0, 0, 0], orientation: list = [0, 0, 0], color: list = [1, 0, 0, 1]) -> int:
+def add_dummy_box(bullet_client, half_extents: list = [0.1, 0.1, 0.1], position: list = [0, 0, 0], orientation: list = [0, 0, 0], color: list = [1, 0, 0, 1]) -> tuple:
     box_id = bullet_client.createVisualShape(
         shapeType=bullet_client.GEOM_BOX,
         halfExtents=half_extents,
@@ -36,12 +41,12 @@ def add_dummy_box(bullet_client, half_extents: list = [0.1, 0.1, 0.1], position:
         baseOrientation=bullet_client.getQuaternionFromEuler(orientation),
     )
 
-    add_coordinate_system(bullet_client, position, bullet_client.getQuaternionFromEuler(orientation))
+    line_ids = add_coordinate_system(bullet_client, position, bullet_client.getQuaternionFromEuler(orientation))
 
-    return box_body_id
+    return box_body_id, line_ids
 
 
-def add_coordinate_system(bullet_client, position: list | np.ndarray, orientation: list | np.ndarray, scale: float = 0.1):
+def add_coordinate_system(bullet_client, position: list | np.ndarray, orientation: list | np.ndarray, scale: float = 0.1) -> list:
     # apply quaternion orientation to x, y, z vectors
     x = np.array([scale, 0, 0])
     y = np.array([0, scale, 0])
@@ -51,9 +56,10 @@ def add_coordinate_system(bullet_client, position: list | np.ndarray, orientatio
     y = np.dot(rotation_matrix, y)
     z = np.dot(rotation_matrix, z)
     # draw the orientation
-    bullet_client.addUserDebugLine(position, position + x, [1, 0, 0])
-    bullet_client.addUserDebugLine(position, position + y, [0, 1, 0])
-    bullet_client.addUserDebugLine(position, position + z, [0, 0, 1])
+    x_line_id = bullet_client.addUserDebugLine(position, position + x, [1, 0, 0])
+    y_line_id = bullet_client.addUserDebugLine(position, position + y, [0, 1, 0])
+    z_line_id = bullet_client.addUserDebugLine(position, position + z, [0, 0, 1])
+    return [x_line_id, y_line_id, z_line_id]
 
 
 def add_coordinate_frame(bullet_client, body_id: int, frame_id: int, size: float = 0.1, line_width: float = 1.0) -> None:
@@ -97,12 +103,13 @@ class PSM:
         self.bullet_client = bullet_client
 
         self.urdf_path = urdf_path
-        self.robot_id = self.bullet_client.loadURDF(
-            urdf_path,
-            useFixedBase=True,
-            basePosition=base_position,
-            baseOrientation=self.bullet_client.getQuaternionFromEuler(base_orientation),
-        )
+        with suppress_stdout():
+            self.robot_id = self.bullet_client.loadURDF(
+                urdf_path,
+                useFixedBase=True,
+                basePosition=base_position,
+                baseOrientation=self.bullet_client.getQuaternionFromEuler(base_orientation),
+            )
 
         for j in range(self.bullet_client.getNumJoints(self.robot_id)):
             self.bullet_client.changeDynamics(self.robot_id, j, linearDamping=0, angularDamping=0)
@@ -245,6 +252,23 @@ class PSM:
                 self.bullet_client.stepSimulation()
                 time.sleep(1 / simulation_hz)
 
+    def tool_position_ik(self, target_position: np.ndarray) -> np.ndarray:
+        if not isinstance(target_position, np.ndarray):
+            target_position = np.array(target_position)
+
+        rcm_position = self.get_rcm_position()
+        relative_vector = target_position - rcm_position
+
+        x, y, z = relative_vector
+
+        insertion = np.sqrt(x * x + y * y + z * z)
+        yaw = 0.0
+        pitch = 0.0
+        yaw = np.sign(x) * np.pi - np.arctan2(x, z)
+        pitch = -np.arcsin(y / insertion)
+
+        return np.array([yaw, pitch, insertion])
+
 
 def print_contact_data_verbose(contact_points: list):
     for contact in contact_points:
@@ -279,3 +303,24 @@ def print_joint_info(bullet_client, robot_id: int):
                 val = choices[val]
             print(f"{name}: {val}")
         print()
+
+
+@contextmanager
+def suppress_stdout():
+    """https://github.com/bulletphysics/bullet3/issues/2170"""
+    fd = sys.stdout.fileno()
+
+    def _redirect_stdout(to):
+        sys.stdout.close()  # + implicit flush()
+        os.dup2(to.fileno(), fd)  # fd writes to 'to' file
+        sys.stdout = os.fdopen(fd, "w")  # Python writes to fd
+
+    with os.fdopen(os.dup(fd), "w") as old_stdout:
+        with open(os.devnull, "w") as file:
+            _redirect_stdout(to=file)
+        try:
+            yield  # allow code to be run with the redirected stdout
+        finally:
+            _redirect_stdout(to=old_stdout)  # restore stdout.
+            # buffering and flags such as
+            # CLOEXEC may be different
