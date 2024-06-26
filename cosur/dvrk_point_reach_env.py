@@ -57,6 +57,9 @@ class DVRKEnv(gym.Env):
         show_workspace: bool = False,
         egl_rendering: bool = False,
         image_shape: tuple[int, int] = (420, 420),
+        fixed_target_position: list[float] | None = None,
+        fixed_target_orientation: list[float] | None = None,
+        reset_bullet_on_reset: bool = True,
     ):
         # Import pybullet only when the environment is created.
         # This is to avoid problems when running multiple environments in parallel.
@@ -65,6 +68,7 @@ class DVRKEnv(gym.Env):
         import pybullet_data
 
         self.bullet_client = p
+        self.reset_bullet_on_reset = reset_bullet_on_reset
 
         # Set the render mode
         self.render_mode = render_mode
@@ -87,10 +91,8 @@ class DVRKEnv(gym.Env):
         }
 
         # Simulation behavior
-        self.bullet_client.setRealTimeSimulation(0)  # Disable real-time simulation
         self.bullet_client.setAdditionalSearchPath(pybullet_data.getDataPath())  # Add the pybullet data path to the search path for plane.urdf
-        self.bullet_client.setPhysicsEngineParameter(fixedTimeStep=1 / self.simulation_hz)  # Set the simulation frequency
-        self.bullet_client.setGravity(0, 0, -9.81)  # Set gravity
+
         if self.render_mode == "human":
             self.bullet_client.resetDebugVisualizerCamera(**CAMERA_VIEW["workspace"])
 
@@ -132,8 +134,19 @@ class DVRKEnv(gym.Env):
         else:
             raise ValueError(f"Invalid action type: {action_type}")
 
-        self.target_position = self.sample_target_position()
-        self.target_orientation = self.sample_target_orientation()
+        # Target position and orientation
+        self.fixed_target_position = fixed_target_position
+        self.fixed_target_orientation = fixed_target_orientation
+        if self.fixed_target_position is not None:
+            self.target_position = np.array(self.fixed_target_position)
+        else:
+            self.target_position = self.sample_target_position()
+
+        if self.fixed_target_orientation is not None:
+            self.target_orientation = np.array(self.fixed_target_orientation)
+        else:
+            self.target_orientation = self.sample_target_orientation()
+
         dummy_observation = self.get_observation()
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=dummy_observation.shape, dtype=np.float32)
 
@@ -143,10 +156,16 @@ class DVRKEnv(gym.Env):
         self.target_orientation_threshold = target_orientation_threshold
         self.dt_queue = deque(maxlen=100)
         self.visual_target = None
+        self.visual_target_lines = []
 
         self.needs_reset = True
 
     def setup_simulation_scene(self):
+        self.bullet_client.setRealTimeSimulation(0)  # Disable real-time simulation
+        # self.bullet_client.setPhysicsEngineParameter(fixedTimeStep=1 / self.simulation_hz)  # Set the simulation frequency
+        self.bullet_client.setTimeStep(1 / self.simulation_hz)  # Set the simulation frequency
+        self.bullet_client.setGravity(0, 0, -9.81)  # Set gravity
+
         # Add a plane
         self.plane = self.bullet_client.loadURDF("plane.urdf", [0, 0, 0])
 
@@ -167,11 +186,16 @@ class DVRKEnv(gym.Env):
         # The effective workspace of the robot is a cone with the RCM point at the tip.
         # The side of the cone is equal to the main insertion link length (minus a bit, because it can fully retract into the shaft).
         self.rcm_position = self.psm.get_rcm_position()
-        self.z_min = 0.01
-        self.z_max = self.rcm_position[2] - 0.04  # Part of the insertion shaft is inside the patient -> cut off a bit
-        cone_side_length = 0.233
-        cone_height = self.rcm_position[2] - self.z_min
+        instrument_shaft_offset = 0.05
+        instrument_length = self.psm.joint_limits[2][1]
+
+        z_min = 0.01
+        cone_side_length = instrument_length - instrument_shaft_offset
+        cone_height = self.rcm_position[2] - instrument_shaft_offset - z_min
         cone_radius = np.sqrt(cone_side_length**2 - cone_height**2)
+
+        self.z_min = z_min
+        self.z_max = self.z_min + cone_height
         self.sample_radius = cone_radius
 
         # Euler angles
@@ -184,14 +208,18 @@ class DVRKEnv(gym.Env):
         # Draw the cone by adding lines from the RCM point to the circle around the RCM point
         num_lines = 100
         num_points = 200
+        rcm_position = self.psm.get_rcm_position()
+        tip = rcm_position
+        tip[-1] = self.z_max
+
         for i in range(num_lines):
             angle = 2 * np.pi * i / num_lines
             x = self.sample_radius * np.cos(angle)
             y = self.sample_radius * np.sin(angle)
-            z = -self.rcm_position[2] + self.z_min
+            z = -self.z_max
             self.bullet_client.addUserDebugLine(
-                lineFromXYZ=self.rcm_position,
-                lineToXYZ=self.rcm_position + np.array([x, y, z]),
+                lineFromXYZ=tip,
+                lineToXYZ=tip + np.array([x, y, z]),
                 lineColorRGB=[1, 0, 0],
                 lineWidth=1.0,
             )
@@ -205,7 +233,7 @@ class DVRKEnv(gym.Env):
         """Sample a target position within the conical workspace of the robot."""
 
         # Sample uniformly in terms of z coordinate
-        height = self.rcm_position[2]
+        height = self.z_max - self.z_min
         radius = self.sample_radius
         z = self.np_random.uniform(0, height)
 
@@ -216,10 +244,10 @@ class DVRKEnv(gym.Env):
         r = max_radius_at_z * np.sqrt(self.np_random.uniform(0, 1))
         theta = 2 * np.pi * self.np_random.uniform(0, 1)
 
-        # Convert from polar to Cartesian coordinates and clip the z coordinate
+        # Convert from polar to Cartesian coordinates
         x = r * np.cos(theta) + self.rcm_position[0]
         y = r * np.sin(theta) + self.rcm_position[1]
-        z = np.clip(z, self.z_min, self.z_max)
+        z = z + self.z_min
 
         return np.array([x, y, z])
 
@@ -330,17 +358,39 @@ class DVRKEnv(gym.Env):
         # Parent class reset initializes the RNG
         super().reset(seed=seed, options=options)
 
-        # Remove the old target visualization
-        if self.visual_target is not None:
-            self.bullet_client.removeBody(self.visual_target)
-            self.visual_target = None
+        if self.reset_bullet_on_reset:
+            self.bullet_client.resetSimulation()
+            self.bullet_client.removeAllUserDebugItems()
+            self.setup_simulation_scene()
+        else:
+            # Remove the old target visualization
+            if self.visual_target is not None:
+                self.bullet_client.removeBody(self.visual_target)
+                for line in self.visual_target_lines:
+                    self.bullet_client.removeUserDebugItem(line)
+                self.visual_target = None
+                self.visual_target_lines = []
+
+        # Set fixed target position and orientation if provided
+        if options is not None:
+            if "fixed_target_position" in options:
+                self.fixed_target_position = options["fixed_target_position"]
+            if "fixed_target_orientation" in options:
+                self.fixed_target_orientation = options["fixed_target_orientation"]
 
         # Sample a new target position and orientation
-        self.target_position = self.sample_target_position()
-        self.target_orientation = self.sample_target_orientation()
+        if self.fixed_target_position is not None:
+            self.target_position = np.array(self.fixed_target_position)
+        else:
+            self.target_position = self.sample_target_position()
+
+        if self.fixed_target_orientation is not None:
+            self.target_orientation = np.array(self.fixed_target_orientation)
+        else:
+            self.target_orientation = self.sample_target_orientation()
 
         # Visualize the target position and orientation
-        self.visual_target = add_dummy_sphere(
+        self.visual_target, self.visual_target_lines = add_dummy_sphere(
             bullet_client=self.bullet_client,
             position=self.target_position,
             orientation=self.target_orientation,
@@ -412,27 +462,57 @@ if __name__ == "__main__":
     import cv2
 
     target_dt = 0.1
-    simulation_hz = 200
+    simulation_hz = 50
+    reset_time_s = 25.0
     frame_skip = int(round(target_dt * simulation_hz))
     env = DVRKEnv(
-        render_mode="human",
-        action_type=ActionType.RELATIVE_POSITION,
+        render_mode="rgb_array",
+        action_type=ActionType.ABSOLUTE_POSITION,
         simulation_hz=simulation_hz,
         frame_skip=frame_skip,
         randomize_initial_joint_values=False,
         # randomize_initial_joint_values=True,
-        egl_rendering=False,
+        egl_rendering=True,
+        reset_bullet_on_reset=True,
     )
 
     # Disable scientific notation for numpy
     np.set_printoptions(suppress=True)
 
+    def normalize_ypi(yaw, pitch, insertion):
+        # normalizing the values with the joint limits to the interval of [-1, 1]
+        yaw = 2 * (yaw - env.psm.joint_limits[0][0]) / (env.psm.joint_limits[0][1] - env.psm.joint_limits[0][0]) - 1
+        pitch = 2 * (pitch - env.psm.joint_limits[1][0]) / (env.psm.joint_limits[1][1] - env.psm.joint_limits[1][0]) - 1
+        insertion = 2 * (insertion - env.psm.joint_limits[2][0]) / (env.psm.joint_limits[2][1] - env.psm.joint_limits[2][0]) - 1
+        return yaw, pitch, insertion
+
     env.reset()
+    counter = 0
+    random_action = np.zeros(7)
+    yaw, pitch, insertion = env.psm.tool_position_ik(env.target_position)
+    yaw, pitch, insertion = normalize_ypi(yaw, pitch, insertion)
+    random_action[0] = yaw
+    random_action[1] = pitch
+    random_action[2] = insertion
+
     while True:
         start = time.time()
-        random_action = env.action_space.sample()
+        # random_action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(random_action)
+
+        if counter == 50:
+            env.reset()
+            counter = 0
+            yaw, pitch, insertion = env.psm.tool_position_ik(env.target_position)
+            yaw, pitch, insertion = normalize_ypi(yaw, pitch, insertion)
+            random_action[0] = yaw
+            random_action[1] = pitch
+            random_action[2] = insertion
+
+        counter += 1
         img = env.render()
+
+        # img = env.render()
         cv2.imshow("DVRK", img[:, :, ::-1])
         cv2.waitKey(1)
         end = time.time()
