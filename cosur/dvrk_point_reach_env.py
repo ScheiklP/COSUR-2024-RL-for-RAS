@@ -6,7 +6,12 @@ from collections import deque
 from enum import Enum
 from pathlib import Path
 
-from utils import PSM, add_dummy_sphere
+import pybullet
+import pkgutil
+import pybullet_data
+from pybullet_utils import bullet_client
+
+from utils import PSM, add_coordinate_frame, add_dummy_sphere
 
 HERE = Path(__file__).parent
 
@@ -31,6 +36,63 @@ CAMERA_VIEW = {
     },
 }
 
+STANDARDIZATION_VALUES = {
+    "obs_mean": np.array(
+        [
+            -0.020213507127663222,
+            -0.01869795543403532,
+            0.12069798633646923,
+            -0.05316467279775374,
+            -0.10771351336254666,
+            -0.010344871223157033,
+            0.6706101237722515,
+            -0.0011738641262115756,
+            0.4680406437091224,
+            0.062311319006895884,
+            -0.20996672867213306,
+            0.013811142829082733,
+            0.0013659369797257384,
+            0.415733201744104,
+            -0.0018221878649365257,
+            0.48359944559982804,
+            0.04945635386727688,
+            -0.668002120156091,
+            0.0010590768690189665,
+            -0.00023844815994337765,
+            0.6298654749956958,
+        ],
+        dtype=np.float32,
+    ),
+    "obs_var": np.array(
+        [
+            0.24568176207513684,
+            0.23733063697108495,
+            0.0018577462178327498,
+            0.5035955394799235,
+            0.4841230335953069,
+            1.5987642935177806,
+            0.1960225680385471,
+            0.004329091390798756,
+            0.020790695571665165,
+            0.0033878893450064508,
+            0.4074766216099463,
+            0.07556956054717207,
+            0.07026786106897699,
+            0.22957324026535278,
+            0.0029446992495264688,
+            0.0029780398682169944,
+            0.0006766550724938759,
+            0.027047582114347223,
+            0.04977482749820537,
+            0.05164073802620834,
+            0.028578321566117827,
+        ],
+        dtype=np.float32,
+    ),
+}
+
+STANDARDIZATION_VALUES["obs_std"] = np.sqrt(STANDARDIZATION_VALUES["obs_var"])
+
 
 class ActionType(Enum):
     ABSOLUTE_POSITION = 1
@@ -45,39 +107,21 @@ class DVRKEnv(gym.Env):
         frame_skip: int = 1,
         action_type: ActionType = ActionType.ABSOLUTE_POSITION,
         randomize_initial_joint_values: bool = True,
-        target_position_threshold: float = 0.005,
-        target_orientation_threshold: float = 0.01,
+        target_position_threshold: float = 0.005,  # in meters
+        target_orientation_threshold: float = 5.0,  # in degrees
         reward_feature_weights: dict = {
             "num_collision_with_floor": -1.0,
             "simulation_unstable": -1.0,
-            "position_difference": -5.0,
+            "position_difference": -10.0,
             "orientation_difference": -1.0,
             "done": 100.0,
         },
-        show_workspace: bool = False,
         egl_rendering: bool = False,
         image_shape: tuple[int, int] = (420, 420),
         fixed_target_position: list[float] | None = None,
         fixed_target_orientation: list[float] | None = None,
-        reset_bullet_on_reset: bool = True,
+        manually_standardize_obs: bool = False,
     ):
-        # Import pybullet only when the environment is created.
-        # This is to avoid problems when running multiple environments in parallel.
-        # Multiprocessing is hard when the libraries do a lot of stuff on import.
-        import pybullet as p
-        import pybullet_data
-
-        self.bullet_client = p
-        self.reset_bullet_on_reset = reset_bullet_on_reset
-
-        # Set the render mode
-        self.render_mode = render_mode
-        if not egl_rendering and render_mode == "human":
-            mode = p.GUI
-        else:
-            mode = p.DIRECT
-        self.bullet_client.connect(mode)
-
         # Controlling the robot at a super high frequency
         # can become pretty hard, because there are no real changes between frames.
         # We can artificially increase the time between observations (and actions) by skipping frames.
@@ -90,36 +134,32 @@ class DVRKEnv(gym.Env):
             "video.frames_per_second": 1.0 / self.effective_dt,
         }
 
-        # Simulation behavior
-        self.bullet_client.setAdditionalSearchPath(pybullet_data.getDataPath())  # Add the pybullet data path to the search path for plane.urdf
-
-        if self.render_mode == "human":
-            self.bullet_client.resetDebugVisualizerCamera(**CAMERA_VIEW["workspace"])
-
         self.image_shape = image_shape
-        if egl_rendering:
-            import pkgutil
-
-            egl = pkgutil.get_loader("eglRenderer")
-            self.bullet_client.loadPlugin(egl.get_filename(), "_eglRendererPlugin")
-            self.bullet_client.configureDebugVisualizer(self.bullet_client.COV_ENABLE_RENDERING, 0)
-            self.bullet_client.configureDebugVisualizer(self.bullet_client.COV_ENABLE_GUI, 0)
+        self.egl_rendering = egl_rendering
+        self.render_mode = render_mode
+        self.physics_client_id = None
 
         # Setup the simulation scene
         self.randomize_initial_joint_values = randomize_initial_joint_values
         self.joint_velocities_unstable_threshold = 1.0
-        self.setup_simulation_scene()
-
-        if show_workspace:
-            self.visualize_workspace()
 
         # Action and observation spaces
         self.action_type = action_type
 
+        self.psm_joint_limits = [
+            [-1.605, 1.5994],
+            [-0.93556, 0.94249],
+            [0.0, 0.24],
+            [-3.14159, 3.14159],
+            [-1.5708, 1.5708],
+            [-1.5708, 1.5708],
+            [0.0, 1.0],
+        ]
+
         # We will use action spaces that are bound between [-1, 1] to make our life easier.
         # Depending on the action type, we will scale these values to the appropriate range.
         self.action_space = gym.spaces.Box(low=-1, high=1, shape=(7,), dtype=np.float32)
-        low, high = [np.array(limits) for limits in zip(*self.psm.joint_limits)]
+        low, high = [np.array(limits) for limits in zip(*self.psm_joint_limits)]
         if action_type == ActionType.ABSOLUTE_POSITION:
             self.scale_action = lambda action: low + (action + 1) * 0.5 * (high - low)
         elif action_type == ActionType.RELATIVE_POSITION:
@@ -137,18 +177,11 @@ class DVRKEnv(gym.Env):
         # Target position and orientation
         self.fixed_target_position = fixed_target_position
         self.fixed_target_orientation = fixed_target_orientation
-        if self.fixed_target_position is not None:
-            self.target_position = np.array(self.fixed_target_position)
-        else:
-            self.target_position = self.sample_target_position()
+        self.target_position = None
+        self.target_orientation = None
 
-        if self.fixed_target_orientation is not None:
-            self.target_orientation = np.array(self.fixed_target_orientation)
-        else:
-            self.target_orientation = self.sample_target_orientation()
-
-        dummy_observation = self.get_observation()
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=dummy_observation.shape, dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(21,), dtype=np.float32)
+        self.manually_standardize_obs = manually_standardize_obs
 
         self.reward_feature_weights = reward_feature_weights
         self.previous_reward_features = {}
@@ -156,17 +189,19 @@ class DVRKEnv(gym.Env):
         self.target_orientation_threshold = target_orientation_threshold
         self.dt_queue = deque(maxlen=100)
         self.visual_target = None
-        self.visual_target_lines = []
 
         self.needs_reset = True
 
     def setup_simulation_scene(self):
-        self.bullet_client.setRealTimeSimulation(0)  # Disable real-time simulation
-        # self.bullet_client.setPhysicsEngineParameter(fixedTimeStep=1 / self.simulation_hz)  # Set the simulation frequency
         self.bullet_client.setTimeStep(1 / self.simulation_hz)  # Set the simulation frequency
         self.bullet_client.setGravity(0, 0, -9.81)  # Set gravity
+        if self.render_mode == "human":
+            # Set camera pose of GUI
+            camera_config = CAMERA_VIEW["workspace"]
+            self.bullet_client.resetDebugVisualizerCamera(**camera_config)
 
         # Add a plane
+        self.bullet_client.setAdditionalSearchPath(pybullet_data.getDataPath())  # Add the pybullet data path to the search path for plane.urdf
         self.plane = self.bullet_client.loadURDF("plane.urdf", [0, 0, 0])
 
         # Initialize the PSM
@@ -179,7 +214,11 @@ class DVRKEnv(gym.Env):
             max_motor_force=1_000.0,
             mimic_joint_force_factor=1.0,
         )
-        self.psm.show_ee_frame()
+        self.psm.joint_limits = self.psm_joint_limits
+
+        if self.render_mode == "human":
+            self.psm.show_ee_frame()
+
         self.joint_target_positions = self.psm.get_joint_positions()
         self.inital_joint_positions = self.joint_target_positions.copy()
 
@@ -187,7 +226,7 @@ class DVRKEnv(gym.Env):
         # The side of the cone is equal to the main insertion link length (minus a bit, because it can fully retract into the shaft).
         self.rcm_position = self.psm.get_rcm_position()
         instrument_shaft_offset = 0.05
-        instrument_length = self.psm.joint_limits[2][1]
+        instrument_length = self.psm_joint_limits[2][1]
 
         z_min = 0.01
         cone_side_length = instrument_length - instrument_shaft_offset
@@ -284,16 +323,19 @@ class DVRKEnv(gym.Env):
             self.bullet_client.stepSimulation()
 
         # Compute the reward and additional information
-        reward_features = self.calculate_reward_features()
+        reward_features, reward_info = self.calculate_reward_features()
         reward = 0.0
         info = {}
         for feature, weight in self.reward_feature_weights.items():
             reward += weight * reward_features[feature]
             info[f"reward_{feature}"] = weight * reward_features[feature]
+
+        self.previous_reward_features = reward_features
         info["distance_to_target_position"] = reward_features["position_difference"]
         info["distance_to_target_orientation"] = reward_features["orientation_difference"]
+
         info["success"] = reward_features["done"]
-        self.previous_reward_features = reward_features
+        info = info | reward_info
 
         # Check if the episode is done
         terminated = reward_features["done"]
@@ -308,8 +350,9 @@ class DVRKEnv(gym.Env):
 
         return observation, reward, terminated, truncated, info
 
-    def calculate_reward_features(self) -> dict:
+    def calculate_reward_features(self) -> tuple[dict, dict]:
         reward_features = {}
+        info = {}
 
         num_collision_with_floor = len(self.bullet_client.getContactPoints(bodyA=self.psm.robot_id, bodyB=self.plane))
         reward_features["num_collision_with_floor"] = num_collision_with_floor
@@ -331,11 +374,20 @@ class DVRKEnv(gym.Env):
         # Difference and sum to account for quaternion double coverage
         orientation_difference = min(np.linalg.norm(quaternion_difference), np.linalg.norm(quaternion_sum))
         reward_features["orientation_difference"] = orientation_difference
-        reward_features["reached_target_orientation"] = orientation_difference < self.target_orientation_threshold
+
+        ee_euler = self.bullet_client.getEulerFromQuaternion(current_quaternion)
+        target_euler = self.bullet_client.getEulerFromQuaternion(self.target_orientation)
+        euler_error = np.rad2deg(np.arccos(np.cos(np.array(ee_euler) - np.array(target_euler))))
+
+        info["euler_error_x"] = euler_error[0]
+        info["euler_error_y"] = euler_error[1]
+        info["euler_error_z"] = euler_error[2]
+
+        reward_features["reached_target_orientation"] = np.all(euler_error < self.target_orientation_threshold)
 
         reward_features["done"] = reward_features["reached_target_position"] and reward_features["reached_target_orientation"]
 
-        return reward_features
+        return reward_features, info
 
     def get_observation(self) -> np.ndarray:
         observation_features = {}
@@ -352,24 +404,33 @@ class DVRKEnv(gym.Env):
         observation_features["target_position"] = self.target_position
         observation_features["target_orientation"] = self.target_orientation
 
-        return np.concatenate(list(observation_features.values()), dtype=np.float32)
+        obs = np.concatenate(list(observation_features.values()), dtype=np.float32)
+
+        if self.manually_standardize_obs:
+            obs = (obs - STANDARDIZATION_VALUES["obs_mean"]) / STANDARDIZATION_VALUES["obs_std"]
+
+        return obs
 
     def reset(self, seed: int | None = None, options: dict | None = None) -> tuple[np.ndarray, dict]:
         # Parent class reset initializes the RNG
         super().reset(seed=seed, options=options)
 
-        if self.reset_bullet_on_reset:
+        # Initial setup of the simulation scene
+        if self.physics_client_id is None:
+            if self.render_mode == "human":
+                self.bullet_client = bullet_client.BulletClient(connection_mode=pybullet.GUI)
+            else:
+                self.bullet_client = bullet_client.BulletClient(connection_mode=pybullet.DIRECT)
+
             self.bullet_client.resetSimulation()
-            self.bullet_client.removeAllUserDebugItems()
+            self.bullet_client.setPhysicsEngineParameter(deterministicOverlappingPairs=1)
+
+            if self.egl_rendering and not self.render_mode == "human":
+                egl = pkgutil.get_loader("eglRenderer")
+                self.bullet_client.loadPlugin(egl.get_filename(), "_eglRendererPlugin")
+
             self.setup_simulation_scene()
-        else:
-            # Remove the old target visualization
-            if self.visual_target is not None:
-                self.bullet_client.removeBody(self.visual_target)
-                for line in self.visual_target_lines:
-                    self.bullet_client.removeUserDebugItem(line)
-                self.visual_target = None
-                self.visual_target_lines = []
+            self.physics_client_id = self.bullet_client._client
 
         # Set fixed target position and orientation if provided
         if options is not None:
@@ -379,32 +440,30 @@ class DVRKEnv(gym.Env):
                 self.fixed_target_orientation = options["fixed_target_orientation"]
 
         # Sample a new target position and orientation
-        if self.fixed_target_position is not None:
-            self.target_position = np.array(self.fixed_target_position)
-        else:
-            self.target_position = self.sample_target_position()
-
-        if self.fixed_target_orientation is not None:
-            self.target_orientation = np.array(self.fixed_target_orientation)
-        else:
-            self.target_orientation = self.sample_target_orientation()
+        self.target_position = np.array(self.fixed_target_position) if self.fixed_target_position is not None else self.sample_target_position()
+        self.target_orientation = np.array(self.fixed_target_orientation) if self.fixed_target_orientation is not None else self.sample_target_orientation()
 
         # Visualize the target position and orientation
-        self.visual_target, self.visual_target_lines = add_dummy_sphere(
-            bullet_client=self.bullet_client,
-            position=self.target_position,
-            orientation=self.target_orientation,
-            radius=0.005,
-            color=[0, 0, 1, 1],
-            with_frame=True,
-        )
+        if self.visual_target is None:
+            self.visual_target, _ = add_dummy_sphere(
+                bullet_client=self.bullet_client,
+                position=self.target_position,
+                orientation=self.target_orientation,
+                radius=0.005,
+                color=[0, 0, 1, 1],
+                with_frame=False,
+            )
+            if self.render_mode == "human":
+                add_coordinate_frame(bullet_client=self.bullet_client, body_id=self.visual_target, size=0.05, frame_id=-1)
+        else:
+            self.bullet_client.resetBasePositionAndOrientation(self.visual_target, self.target_position, self.target_orientation)
 
         # Reset the robot
         if self.randomize_initial_joint_values:
             valid_reset = False
             while not valid_reset:
                 # Reset the PSM to joint values within 80% of the joint limits
-                low, high = [np.array(limits) for limits in zip(*self.psm.joint_limits)]
+                low, high = [np.array(limits) for limits in zip(*self.psm_joint_limits)]
                 initial_joint_positions = low + 0.2 * (high - low) + 0.6 * self.np_random.random(7) * (high - low)
                 self.joint_target_positions = initial_joint_positions
 
@@ -418,7 +477,7 @@ class DVRKEnv(gym.Env):
                 if not robot_in_collision:
                     valid_reset = True
         else:
-            self.joint_target_positions = self.inital_joint_positions.copy()
+            self.joint_target_positions = [0.0] * 7
             self.psm.reset_joint_positions(self.inital_joint_positions)
             self.bullet_client.stepSimulation()
 
@@ -467,13 +526,13 @@ if __name__ == "__main__":
     frame_skip = int(round(target_dt * simulation_hz))
     env = DVRKEnv(
         render_mode="rgb_array",
-        action_type=ActionType.ABSOLUTE_POSITION,
+        action_type=ActionType.RELATIVE_POSITION,
         simulation_hz=simulation_hz,
         frame_skip=frame_skip,
-        randomize_initial_joint_values=False,
-        # randomize_initial_joint_values=True,
+        randomize_initial_joint_values=True,
         egl_rendering=True,
-        reset_bullet_on_reset=True,
+        # fixed_target_position=[-0.2, -0.2, 0.1],
+        # fixed_target_orientation=[0.0, 0.0, 0.0, 1.0],
     )
 
     # Disable scientific notation for numpy
@@ -481,23 +540,23 @@ if __name__ == "__main__":
 
     def normalize_ypi(yaw, pitch, insertion):
         # normalizing the values with the joint limits to the interval of [-1, 1]
-        yaw = 2 * (yaw - env.psm.joint_limits[0][0]) / (env.psm.joint_limits[0][1] - env.psm.joint_limits[0][0]) - 1
-        pitch = 2 * (pitch - env.psm.joint_limits[1][0]) / (env.psm.joint_limits[1][1] - env.psm.joint_limits[1][0]) - 1
-        insertion = 2 * (insertion - env.psm.joint_limits[2][0]) / (env.psm.joint_limits[2][1] - env.psm.joint_limits[2][0]) - 1
+        yaw = 2 * (yaw - env.psm_joint_limits[0][0]) / (env.psm_joint_limits[0][1] - env.psm_joint_limits[0][0]) - 1
+        pitch = 2 * (pitch - env.psm_joint_limits[1][0]) / (env.psm_joint_limits[1][1] - env.psm_joint_limits[1][0]) - 1
+        insertion = 2 * (insertion - env.psm_joint_limits[2][0]) / (env.psm_joint_limits[2][1] - env.psm_joint_limits[2][0]) - 1
         return yaw, pitch, insertion
 
     env.reset()
     counter = 0
-    random_action = np.zeros(7)
-    yaw, pitch, insertion = env.psm.tool_position_ik(env.target_position)
-    yaw, pitch, insertion = normalize_ypi(yaw, pitch, insertion)
-    random_action[0] = yaw
-    random_action[1] = pitch
-    random_action[2] = insertion
+    # random_action = np.zeros(7)
+    # yaw, pitch, insertion = env.psm.tool_position_ik(env.target_position)
+    # yaw, pitch, insertion = normalize_ypi(yaw, pitch, insertion)
+    # random_action[0] = yaw
+    # random_action[1] = pitch
+    # random_action[2] = insertion
 
     while True:
         start = time.time()
-        # random_action = env.action_space.sample()
+        random_action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(random_action)
 
         if counter == 50:
@@ -505,14 +564,12 @@ if __name__ == "__main__":
             counter = 0
             yaw, pitch, insertion = env.psm.tool_position_ik(env.target_position)
             yaw, pitch, insertion = normalize_ypi(yaw, pitch, insertion)
-            random_action[0] = yaw
-            random_action[1] = pitch
-            random_action[2] = insertion
+            # random_action[0] = yaw
+            # random_action[1] = pitch
+            # random_action[2] = insertion
 
         counter += 1
         img = env.render()
-
-        # img = env.render()
         cv2.imshow("DVRK", img[:, :, ::-1])
         cv2.waitKey(1)
         end = time.time()
