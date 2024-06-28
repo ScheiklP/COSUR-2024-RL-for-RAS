@@ -1,4 +1,0 @@
-Randomized initial joint values
-Randomized target position
-With Position and Orientation control
-Position and Orientation thresholds: 1 cm and 10 degrees

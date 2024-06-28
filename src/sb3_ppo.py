@@ -34,10 +34,8 @@ if __name__ == "__main__":
 
     experiment_name = "DVRK_PointReach"
     notes_about_this_run = [
-        "Randomized initial joint values",
-        "Randomized target position",
-        "With Position and Orientation control",
-        "Position and Orientation thresholds: 1 cm and 10 degrees",
+        "YOUR NOTES HERE",
+        "What is the goal of this experiment?",
     ]
 
     add_render_callback = False
@@ -95,25 +93,12 @@ if __name__ == "__main__":
         "target_position_threshold": 0.01,  # 1 cm
         "target_orientation_threshold": 10.0,  # 10 degrees
         "reward_feature_weights": {
-            "num_collision_with_floor": 0.0,
-            "simulation_unstable": 0.0,
-            "orientation_difference": -1.0,
-            "position_difference": -10.0,
-            "done": 100.0,
+            # TODO: Define the reward feature weights
         },
     }
 
     info_logging_keywords = [
-        "reward_num_collision_with_floor",
-        "reward_position_difference",
-        "reward_orientation_difference",
-        "reward_done",
-        "distance_to_target_position",
-        "distance_to_target_orientation",
-        "euler_error_x",
-        "euler_error_y",
-        "euler_error_z",
-        "success",
+        # TODO: Define the keywords to log (must be present in the info dict returned by the environment)
     ]
 
     log_config = {
