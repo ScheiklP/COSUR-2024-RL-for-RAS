@@ -12,10 +12,16 @@ from dvrk_point_reach_env import DVRKEnv, ActionType
 HERE = Path(__file__).parent
 
 
-# TODO: task versions
+# TODO: Randomize the cloth position and rotation
+# TODO: Implement reward function
+# TODO: Implement done condition
+# TODO: task versions:
 # 1. Occluded point becomes visible
+# Could be done using the segmentation image
 # 2. Cloth corner is at a target position
 # 3. First go to a target position, then grasp the cloth, then go to another target position
+# Grasp point could be the closest index over the target position. Retraction target could be above the attachment points.
+# TODO: Implement full IK for the PSM
 
 
 class DVRKEnvTR(DVRKEnv):
@@ -113,7 +119,6 @@ class DVRKEnvTR(DVRKEnv):
         random_weights = self.np_random.uniform(0, 1, len(square_vertices))
         random_weights /= np.sum(random_weights)
         visual_target_position = np.sum([square_vertex_positions[i] * random_weights[i] for i in range(len(square_vertices))], axis=0)
-        # visual_target_position[2] = -(length + 0.0005)
         visual_target_position[2] = -(length + 0.0002)
 
         visual_id = self.bullet_client.createVisualShape(
