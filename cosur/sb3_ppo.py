@@ -1,6 +1,7 @@
 import json
 import numpy as np
 import time
+import shutil
 
 from argparse import ArgumentParser
 from pathlib import Path
@@ -12,10 +13,32 @@ from sb3_utils import configure_learning_pipeline, linear_schedule
 from dvrk_point_reach_env import DVRKEnv, ActionType
 
 
+def default_serializer(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+
+    try:
+        json.dumps(obj)
+        return obj
+    except TypeError:
+        return str(obj)
+
+
 if __name__ == "__main__":
     arg_parser = ArgumentParser()
     arg_parser.add_argument("--show", "-s", type=Path)
+    arg_parser.add_argument("--video", "-v", action="store_true")
+    arg_parser.add_argument("--num_episodes", "-n", type=int, default=-1)
+
     args = arg_parser.parse_args()
+
+    experiment_name = "DVRK_PointReach"
+    notes_about_this_run = [
+        "Randomized initial joint values",
+        "Randomized target position",
+        "With Position and Orientation control",
+        "Position and Orientation thresholds: 1 cm and 10 degrees",
+    ]
 
     add_render_callback = False
     normalize_reward = True
@@ -93,6 +116,14 @@ if __name__ == "__main__":
         "success",
     ]
 
+    log_config = {
+        "experiment_name": experiment_name,
+        "config": config,
+        "ppo_kwargs": ppo_kwargs,
+        "env_kwargs": env_kwargs,
+        "info_logging_keywords": info_logging_keywords,
+    }
+
     if args.show is None:
         model, callback = configure_learning_pipeline(
             env_class=DVRKEnv,
@@ -106,18 +137,38 @@ if __name__ == "__main__":
             reward_clip=reward_clip,
             obs_clip=obs_clip,
         )
+
         # Train the model
         model.learn(
             total_timesteps=config["total_timesteps"],
             callback=callback,
-            tb_log_name=f"PPO_DVRK_PointReach",
+            tb_log_name=experiment_name,
         )
 
+        # Save the configuration
         log_path = str(model.logger.dir)
+        with open(log_path + "/config.json", "w") as f:
+            json.dump(log_config, f, default=default_serializer)
+
+        # Save the notes
+        with open(log_path + "/notes.txt", "w") as f:
+            for note in notes_about_this_run:
+                f.write(note + "\n")
+
+        # Save the model
         model.save(log_path + "/saved_model")
 
-        norm_env = model.get_vec_normalize_env()
+        # Move the videos to the correct location
+        if config["videos_per_run"] > 0:
+            org_video_path = Path(log_path).parent / "videos"
+            if not org_video_path.exists():
+                raise Warning(f"Video path {org_video_path} does not exist.")
+            else:
+                new_video_path = Path(log_path) / "videos"
+                shutil.move(org_video_path, new_video_path)
 
+        # Save the standardization info
+        norm_env = model.get_vec_normalize_env()
         standardization_info = {}
         if normalize_observations:
             standardization_info["obs_mean"] = norm_env.obs_rms.mean
@@ -125,10 +176,8 @@ if __name__ == "__main__":
         if normalize_reward:
             standardization_info["rew_mean"] = norm_env.ret_rms.mean
             standardization_info["rew_var"] = norm_env.ret_rms.var
-
-        # Save as json
         with open(log_path + "/standardization_info.json", "w") as f:
-            json.dump(standardization_info, f)
+            json.dump(standardization_info, f, default=default_serializer)
 
         print("Saved model to", log_path + "/saved_model")
     else:
@@ -145,7 +194,16 @@ if __name__ == "__main__":
             raise ValueError(f"Standardization info path {standardization_info_path} does not exist")
 
         adapted_env_kwargs = env_kwargs.copy()
-        adapted_env_kwargs["render_mode"] = "human"
+        if not args.video:
+            adapted_env_kwargs["render_mode"] = "human"
+        else:
+            import cv2
+
+            if args.num_episodes < 0:
+                raise ValueError("Cannot record video without specifying number of episodes.")
+
+            video_path = args.show.parent / "video.mp4"
+        video_recorder = None
         make_env = lambda: TimeLimit(DVRKEnv(**adapted_env_kwargs), max_episode_steps=config["max_episode_steps"])
 
         eval_env = VecFrameStack(
@@ -163,15 +221,18 @@ if __name__ == "__main__":
         standardization_info = json.load(open(standardization_info_path, "r"))
         norm_env = eval_env.venv
         if normalize_observations:
-            norm_env.obs_rms.mean = standardization_info["obs_mean"]
-            norm_env.obs_rms.var = standardization_info["obs_var"]
+            norm_env.obs_rms.mean = np.array(standardization_info["obs_mean"])
+            norm_env.obs_rms.var = np.array(standardization_info["obs_var"])
         if normalize_reward:
             norm_env.ret_rms.mean = standardization_info["rew_mean"]
             norm_env.ret_rms.var = standardization_info["rew_var"]
 
         model = PPO.load(str(args.show))
 
+        episode_count = 0
         while True:
+            if args.num_episodes > 0 and episode_count >= args.num_episodes:
+                break
             obs = eval_env.reset()
             done = False
             while not done:
@@ -181,9 +242,30 @@ if __name__ == "__main__":
                 success = info[0]["success"]
                 done = np.all(dones)
                 time_end = time.time()
+
+                if args.video:
+                    img = eval_env.render(mode="rgb_array")
+
+                    if video_recorder is None:
+                        video_recorder = cv2.VideoWriter(
+                            str(video_path),
+                            cv2.VideoWriter_fourcc(*"mp4v"),
+                            1 / target_dt,
+                            (img.shape[1], img.shape[0]),
+                        )
+
+                    video_recorder.write(img[..., ::-1])
+                    cv2.imshow("Video", img[..., ::-1])
+                    cv2.waitKey(1)
+
                 time.sleep(max(0, target_dt - (time_end - time_start)))
 
                 if done:
                     print(f"Episode done. {'Success' if success else 'Timeout'}")
                     time.sleep(1.0)
+                    episode_count += 1
                     break
+
+        if args.video:
+            video_recorder.release()
+            print("Saved video to", video_path)
