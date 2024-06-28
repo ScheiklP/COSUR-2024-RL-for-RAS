@@ -34,6 +34,12 @@ CAMERA_VIEW = {
         "cameraPitch": -25.80,
         "cameraYaw": 144.0,
     },
+    "tissue": {
+        "cameraTargetPosition": (-0.47, -0.23, -0.39),
+        "cameraDistance": 1.1,
+        "cameraPitch": -27.40,
+        "cameraYaw": 147.6,
+    },
 }
 
 STANDARDIZATION_VALUES = {
@@ -488,30 +494,42 @@ class DVRKEnv(gym.Env):
 
         return observation, reset_info
 
-    def render(self, mode: str = "human") -> np.ndarray | None:
+    def render(self, mode: str = "human", view: str = "workspace", img_type: str = "rgb") -> np.ndarray | None:
         view_matrix = self.bullet_client.computeViewMatrixFromYawPitchRoll(
-            cameraTargetPosition=CAMERA_VIEW["workspace"]["cameraTargetPosition"],
-            distance=CAMERA_VIEW["workspace"]["cameraDistance"],
-            yaw=CAMERA_VIEW["workspace"]["cameraYaw"],
-            pitch=CAMERA_VIEW["workspace"]["cameraPitch"],
+            cameraTargetPosition=CAMERA_VIEW[view]["cameraTargetPosition"],
+            distance=CAMERA_VIEW[view]["cameraDistance"],
+            yaw=CAMERA_VIEW[view]["cameraYaw"],
+            pitch=CAMERA_VIEW[view]["cameraPitch"],
             roll=0,
             upAxisIndex=2,
         )
+        far = 10.0
+        near = 0.1
         projection_matrix = self.bullet_client.computeProjectionMatrixFOV(
             fov=60,
             aspect=1.0,
-            nearVal=0.1,
-            farVal=10.0,
+            nearVal=near,
+            farVal=far,
         )
+        extra_flags = {}
+        if img_type != "segmentation":
+            extra_flags["flags"] = self.bullet_client.ER_NO_SEGMENTATION_MASK
         img = self.bullet_client.getCameraImage(
             width=self.image_shape[1],
             height=self.image_shape[0],
             viewMatrix=view_matrix,
             projectionMatrix=projection_matrix,
+            **extra_flags,
         )
-        rgb_array = np.array(img[2])[:, :, :3]
-
-        return rgb_array
+        if img_type == "rgb":
+            return np.array(img[2])[:, :, :3]
+        elif img_type == "depth":
+            depth_image = np.array(img[3])
+            return far * near / (far - (far - near) * depth_image)
+        elif img_type == "segmentation":
+            return np.array(img[4])
+        else:
+            raise ValueError(f"Invalid image type: {img_type}")
 
     def close(self):
         self.bullet_client.disconnect()
