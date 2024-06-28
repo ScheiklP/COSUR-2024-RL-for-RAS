@@ -1,12 +1,13 @@
 import time
 import numpy as np
 import gymnasium as gym
+import cv2
 
 from pathlib import Path
 
 from utils import add_dummy_sphere
 
-from dvrk_point_reach_env import DVRKEnv, ActionType, CAMERA_VIEW
+from dvrk_point_reach_env import DVRKEnv, ActionType
 
 HERE = Path(__file__).parent
 
@@ -15,8 +16,6 @@ HERE = Path(__file__).parent
 # 1. Occluded point becomes visible
 # 2. Cloth corner is at a target position
 # 3. First go to a target position, then grasp the cloth, then go to another target position
-
-# TODO: restrict tool yaw, pith, and gripper opening, when the tool is still in the insertion shaft
 
 
 class DVRKEnvTR(DVRKEnv):
@@ -30,10 +29,39 @@ class DVRKEnvTR(DVRKEnv):
         egl_rendering: bool = False,
         image_shape: tuple[int, int] = (420, 420),
         reward_feature_weights: dict = {},
+        coarse_cloth: bool = True,
+        fixed_visual_target_index: int | None = None,
     ):
-        self.fixed_indices = [0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33]
-        num_indices_for_obs = 10
-        non_fixed_cloth_indices = [i for i in range(100) if i not in self.fixed_indices]
+        self.cloth_position = [-0.05, 0.45]
+        self.cloth_rotation = np.deg2rad(0.0)
+        self.fixed_visual_target_index = fixed_visual_target_index
+
+        self.coarse_cloth = coarse_cloth
+        if coarse_cloth:
+            self.fixed_indices = [0, 1, 5, 6]
+            self.squares = [
+                [2, 3, 7, 8],
+                [3, 4, 8, 9],
+                [7, 8, 12, 13],
+                [8, 9, 13, 14],
+                [12, 13, 17, 18],
+                [13, 14, 18, 19],
+                [17, 18, 22, 23],
+                [18, 19, 23, 24],
+                [16, 17, 21, 22],
+                [15, 16, 20, 21],
+                [10, 11, 15, 16],
+            ]
+            self.visual_target_indices = list(range(len(self.squares)))
+
+            num_vertices = 25
+            num_indices_for_obs = 5
+        else:
+            self.fixed_indices = [0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33]
+            num_vertices = 100
+            num_indices_for_obs = 10
+
+        non_fixed_cloth_indices = [i for i in range(num_vertices) if i not in self.fixed_indices]
         self.observation_indices = np.linspace(0, len(non_fixed_cloth_indices) - 1, num_indices_for_obs).astype(int)
 
         super().__init__(
@@ -48,15 +76,60 @@ class DVRKEnvTR(DVRKEnv):
         )
 
         # Update observation space
-        # Cloth vertex positions, joint positions, end-effector pose
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(num_indices_for_obs * 3 + 7 + 7,), dtype=np.float32)
+        obs_len = 0
+        # Cloth vertex positions
+        obs_len += num_indices_for_obs * 3
+        # Joint positions
+        obs_len += 7
+        # End-effector position
+        obs_len += 3
+        # End-effector orientation
+        obs_len += 4
+        # Grasped (yes/no)
+        obs_len += 1
+
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(obs_len,), dtype=np.float32)
 
     def setup_simulation_scene(self):
         super().setup_simulation_scene()
 
         # Initialize the cloth
-        self.add_cloth()
+        self.add_cloth(self.cloth_position, self.cloth_rotation)
         self.grasp_constraint = None
+
+        # Make the plane transparent
+        self.bullet_client.changeVisualShape(
+            self.plane,
+            -1,
+            rgbaColor=[0.4, 0.4, 0.4, 0.3],
+        )
+
+        # Add a very flat cylinder that is hidden beneath the cloth
+        radius = 0.003
+        length = 0.001
+        visual_target_index = self.fixed_visual_target_index if self.fixed_visual_target_index is not None else self.np_random.choice(self.visual_target_indices)
+        square_vertices = self.squares[visual_target_index]
+        square_vertex_positions = np.array(self.bullet_client.getMeshData(self.cloth_id, -1, flags=self.bullet_client.MESH_DATA_SIMULATION_MESH)[1])[square_vertices]
+        random_weights = self.np_random.uniform(0, 1, len(square_vertices))
+        random_weights /= np.sum(random_weights)
+        visual_target_position = np.sum([square_vertex_positions[i] * random_weights[i] for i in range(len(square_vertices))], axis=0)
+        # visual_target_position[2] = -(length + 0.0005)
+        visual_target_position[2] = -(length + 0.0002)
+
+        visual_id = self.bullet_client.createVisualShape(
+            shapeType=self.bullet_client.GEOM_CYLINDER,
+            radius=radius,
+            length=length,
+            rgbaColor=[1.0, 0, 1.0, 1],
+        )
+        self.visual_target_body_id = self.bullet_client.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=-1,
+            baseVisualShapeIndex=visual_id,
+            basePosition=visual_target_position,
+            baseOrientation=[0, 0, 0, 1],
+            useMaximalCoordinates=True,
+        )
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Execute one time step in the environment.
@@ -90,12 +163,12 @@ class DVRKEnvTR(DVRKEnv):
         reward_features = self.calculate_reward_features()
         reward = 0.0
         info = {}
-        # for feature, weight in self.reward_feature_weights.items():
-        #     reward += weight * reward_features[feature]
-        #     info[f"reward_{feature}"] = weight * reward_features[feature]
-        # info["success"] = reward_features["done"]
+        for feature, weight in self.reward_feature_weights.items():
+            reward += weight * reward_features[feature]
+            info[f"reward_{feature}"] = weight * reward_features[feature]
         self.previous_reward_features = reward_features
 
+        # info["success"] = reward_features["done"]
         # Check if the episode is done
         # terminated = reward_features["done"]
         terminated = False
@@ -139,6 +212,9 @@ class DVRKEnvTR(DVRKEnv):
         observation_features["ee_position"] = ee_position
         observation_features["ee_orientation"] = ee_quaternion
 
+        # Grasped (yes/no)
+        observation_features["grasped"] = np.array([1.0]) if self.grasp_constraint else np.array([0.0])
+
         # Cloth vertex positions
         _, cloth_vertex_positions = self.bullet_client.getMeshData(self.cloth_id, -1, flags=self.bullet_client.MESH_DATA_SIMULATION_MESH)
         observation_features["cloth_vertex_positions"] = np.array(cloth_vertex_positions)[self.observation_indices].flatten()
@@ -168,6 +244,7 @@ class DVRKEnvTR(DVRKEnv):
 
                 robot_in_collision = False
                 contact_points = self.bullet_client.getContactPoints(bodyA=self.psm.robot_id, bodyB=self.plane)
+                contact_points += self.bullet_client.getContactPoints(bodyA=self.psm.robot_id, bodyB=self.cloth_id)
                 robot_in_collision = len(contact_points) > 0
 
                 if not robot_in_collision:
@@ -244,16 +321,16 @@ class DVRKEnvTR(DVRKEnv):
 
         return constraint_id
 
-    def add_cloth(self):
+    def add_cloth(self, cloth_position: list[float], cloth_rotation: float):
         cloth_scale = 0.05
         collision_margin = 0.001
-        position = [-0.05, 0.45, collision_margin / 2]
+        position = [cloth_position[0], cloth_position[1], collision_margin / 2]
 
         # Create the cloth
         self.cloth_id = self.bullet_client.loadSoftBody(
-            fileName=f"{HERE}/meshes/cloth.obj",
+            fileName=f"{HERE}/meshes/coarse_cloth.obj" if self.coarse_cloth else f"{HERE}/meshes/cloth.obj",
             basePosition=position,
-            baseOrientation=self.bullet_client.getQuaternionFromEuler([np.pi / 2, 0, 0]),
+            baseOrientation=self.bullet_client.getQuaternionFromEuler([np.pi / 2, 0, cloth_rotation]),
             collisionMargin=collision_margin,
             scale=cloth_scale,
             mass=0.03,
@@ -294,25 +371,43 @@ class DVRKEnvTR(DVRKEnv):
             id = add_dummy_sphere(self.bullet_client, position=vertex_positions[i], radius=0.002, color=[0, 0, 1, 0.6], with_frame=False)
             self.anchor_spheres.append(id)
 
+        # Add text to each cloth vertex with the index
+        # for i in range(len(vertex_positions)):
+        #     self.bullet_client.addUserDebugText(text=str(i), textPosition=vertex_positions[i], textColorRGB=[1, 1, 1], textSize=5.0)
+
 
 if __name__ == "__main__":
     target_dt = 0.02
     simulation_hz = 250
     frame_skip = int(round(target_dt * simulation_hz))
     env = DVRKEnvTR(
-        render_mode="human",
+        render_mode="rgb_array",
         action_type=ActionType.RELATIVE_POSITION,
-        # action_type=ActionType.ABSOLUTE_POSITION,
         simulation_hz=simulation_hz,
         frame_skip=frame_skip,
         randomize_initial_joint_values=False,
+        egl_rendering=True,
     )
+
+    color_map = {
+        -1: [0, 0, 0],
+        0: [255, 0, 0],
+        1: [0, 255, 0],
+        2: [0, 0, 255],
+        3: [255, 255, 0],
+        4: [255, 0, 255],
+        5: [0, 255, 255],
+        6: [255, 255, 255],
+    }
+    img_type = "rgb"
 
     # Disable scientific notation for numpy
     np.set_printoptions(suppress=True)
 
     env.reset()
+    counter = 0
     while True:
+        before = time.time()
         random_action = np.zeros(7)
         if not env.grasp_constraint:
             random_action[2] = 1.0
@@ -322,36 +417,21 @@ if __name__ == "__main__":
             else:
                 random_action[2] = -1.0
         obs, reward, terminated, truncated, info = env.step(random_action)
-        print(f"Current FPS: {env.current_fps:.2f}")
+        counter += 1
+        img = env.render(view="tissue", img_type=img_type)
+        if img_type == "segmentation":
+            display_img = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
+            for i, color in color_map.items():
+                display_img[img == i] = color
+        elif img_type == "depth":
+            display_img = img
+        elif img_type == "rgb":
+            display_img = img[..., ::-1]
 
-    # insertion_values = np.linspace(0.05, 0.145, 1000)
-    # current_joint_values = env.psm.get_joint_positions()
-    # grasped = False
-    #
-    # while True:
-    #     for insertion_value in insertion_values:
-    #         current_joint_values[2] = insertion_value
-    #         env.psm.set_joint_positions(current_joint_values)
-    #         env.bullet_client.stepSimulation()
-    #
-    #         # positions, velocities, forces, torques = env.bullet_client.getJointStates(env.psm.robot_id, env.psm.joint_ids)
-    #         positions = [val[0] for val in env.bullet_client.getJointStates(env.psm.robot_id, env.psm.joint_ids)]
-    #         control_error = np.rad2deg(np.array(current_joint_values) - np.array(positions))
-    #         # print(control_error)
-    #
-    #         if not grasped:
-    #             contact, vertex = env.check_gripper_contacts()
-    #             if contact:
-    #                 assert vertex is not None
-    #                 env.create_grasp_constraint(vertex)
-    #         time.sleep(1.0 / env.simulation_hz)
-    #
-    #     for insertion_value in insertion_values[::-1]:
-    #         current_joint_values[2] = insertion_value
-    #         env.psm.set_joint_positions(current_joint_values)
-    #         env.bullet_client.stepSimulation()
-    #         positions = [val[0] for val in env.bullet_client.getJointStates(env.psm.robot_id, env.psm.joint_ids)]
-    #         control_error = np.rad2deg(np.array(current_joint_values) - np.array(positions))
-    #         # print(control_error)
-    #         # contact, vertex = env.check_gripper_contacts()
-    #         time.sleep(1.0 / env.simulation_hz)
+        cv2.imshow("Image", display_img)
+        cv2.waitKey(1)
+        after = time.time()
+        print(f"Framerate: {1.0 / (after - before):.2f} Hz")
+        if counter > 200:
+            env.reset()
+            counter = 0
