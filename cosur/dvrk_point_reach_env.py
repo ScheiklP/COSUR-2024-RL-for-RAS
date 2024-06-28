@@ -213,7 +213,7 @@ class DVRKEnv(gym.Env):
         # Initialize the PSM
         self.psm = PSM(
             bullet_client=self.bullet_client,
-            urdf_path="dvrk.urdf",
+            urdf_path=str(HERE / "dvrk.urdf"),
             show_frames=False,
             base_position=[0.0, 0.0, 0.15],
             base_orientation=[0.0, 0.0, 0.0],
