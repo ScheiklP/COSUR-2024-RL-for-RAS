@@ -536,15 +536,12 @@ class DVRKEnv(gym.Env):
 
 
 if __name__ == "__main__":
-    import cv2
-
     target_dt = 0.1
     simulation_hz = 50
-    reset_time_s = 25.0
     frame_skip = int(round(target_dt * simulation_hz))
     env = DVRKEnv(
-        render_mode="rgb_array",
-        action_type=ActionType.RELATIVE_POSITION,
+        render_mode="human",
+        action_type=ActionType.ABSOLUTE_POSITION,
         simulation_hz=simulation_hz,
         frame_skip=frame_skip,
         randomize_initial_joint_values=True,
@@ -565,30 +562,26 @@ if __name__ == "__main__":
 
     env.reset()
     counter = 0
-    # random_action = np.zeros(7)
-    # yaw, pitch, insertion = env.psm.tool_position_ik(env.target_position)
-    # yaw, pitch, insertion = normalize_ypi(yaw, pitch, insertion)
-    # random_action[0] = yaw
-    # random_action[1] = pitch
-    # random_action[2] = insertion
+    random_action = np.zeros(7)
+    yaw, pitch, insertion = env.psm.tool_position_ik(env.target_position)
+    yaw, pitch, insertion = normalize_ypi(yaw, pitch, insertion)
+    random_action[0] = yaw
+    random_action[1] = pitch
+    random_action[2] = insertion
 
     while True:
         start = time.time()
-        random_action = env.action_space.sample()
         obs, reward, terminated, truncated, info = env.step(random_action)
 
-        if counter == 50:
+        if counter == 2.0 / target_dt:
             env.reset()
             counter = 0
             yaw, pitch, insertion = env.psm.tool_position_ik(env.target_position)
             yaw, pitch, insertion = normalize_ypi(yaw, pitch, insertion)
-            # random_action[0] = yaw
-            # random_action[1] = pitch
-            # random_action[2] = insertion
+            random_action[0] = yaw
+            random_action[1] = pitch
+            random_action[2] = insertion
 
         counter += 1
-        img = env.render()
-        cv2.imshow("DVRK", img[:, :, ::-1])
-        cv2.waitKey(1)
         end = time.time()
         time.sleep(max(0, target_dt - (end - start)))
