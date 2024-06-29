@@ -24,7 +24,7 @@ pip install -r requirements.txt
 
 4. Test the installation
 ```bash
-python3 cosur/dvrk_point_reach_env.py
+python3 src/dvrk_point_reach_env.py
 ```
 
 ## Your TODOs for the summer school
